@@ -51,3 +51,21 @@ jobs:
         with:
           name: mtg-binder-apk
           path: build/app/outputs/flutter-apk/app-release.apk
+
+      # A debug build skips code shrinking entirely. Useful for telling apart
+      # "the code is wrong" from "release shrinking broke a library".
+      - name: Build debug APK
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SHOWCASE_URL: ${{ secrets.SHOWCASE_URL }}
+        run: >
+          flutter build apk --debug
+          --dart-define=SUPABASE_URL="$SUPABASE_URL"
+          --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+          --dart-define=SHOWCASE_URL="$SHOWCASE_URL"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mtg-binder-debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk

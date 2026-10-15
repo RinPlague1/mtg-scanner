@@ -1,0 +1,71 @@
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      # The repo only holds lib/, test/ and the manifest; generate the rest of
+      # the Android project. Existing files are left untouched.
+      - name: Generate Android scaffolding
+        run: flutter create --org com.ollie --project-name mtg_dark_scanner --platforms android .
+
+      - run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: Unit tests
+        run: flutter test
+
+      # Online features (friends, trades, sync) are switched on when these
+      # repository secrets exist: Settings → Secrets and variables → Actions.
+      # Without them the APK still builds and works offline.
+      - name: Build APK
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SHOWCASE_URL: ${{ secrets.SHOWCASE_URL }}
+        run: >
+          flutter build apk --release
+          --dart-define=SUPABASE_URL="$SUPABASE_URL"
+          --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+          --dart-define=SHOWCASE_URL="$SHOWCASE_URL"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mtg-binder-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+      # A debug build skips code shrinking entirely. Useful for telling apart
+      # "the code is wrong" from "release shrinking broke a library".
+      - name: Build debug APK
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SHOWCASE_URL: ${{ secrets.SHOWCASE_URL }}
+        run: >
+          flutter build apk --debug
+          --dart-define=SUPABASE_URL="$SUPABASE_URL"
+          --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+          --dart-define=SHOWCASE_URL="$SHOWCASE_URL"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mtg-binder-debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
