@@ -48,6 +48,7 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
   /// Apply a name-matching change to the running scanner.
   void _settingsChanged() {
     _scan?.setUseNameList(widget.settings.nameMatching == NameMatching.offlineList);
+    if (mounted) setState(() {}); // e.g. the troubleshooting panel was switched on
   }
 
   Future<void> _start() async {
@@ -184,10 +185,33 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
                   ),
                 ),
                 if (s != null) _statusBar(s),
+                if (s != null && widget.settings.showScanDebug) _debugPanel(s),
                 if (s?.hit != null && !_autoAdd) _resultPanel(s!) else _controls(s),
                 _bufferBar(),
               ],
             ),
+    );
+  }
+
+  /// Raw OCR output, shown when "Show what the scanner reads" is on.
+  Widget _debugPanel(ScanController s) {
+    const style = TextStyle(color: Colors.white70, fontSize: 12, fontFamily: 'monospace');
+    String lines(List<String> l) => l.isEmpty ? '(nothing)' : l.map((x) => '"$x"').join('  ');
+    return Container(
+      width: double.infinity,
+      color: const Color(0xFF111111),
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Title text: ${lines(s.lastNameLines)}', style: style, maxLines: 2, overflow: TextOverflow.ellipsis),
+        Text('Set line:   ${lines(s.lastSetLines)}', style: style, maxLines: 2, overflow: TextOverflow.ellipsis),
+        Text(
+          'Parsed set: ${s.lastSetInfo ?? '-'}  ·  match: ${s.lastMatch ?? '-'}  ·  '
+          '${s.useNameList ? 'name list' : 'Scryfall online'}  ·  frames ${s.framesAnalysed} (${s.lastFrameMs} ms)',
+          style: style,
+        ),
+        if (s.ocrProblem != null)
+          Text('OCR error: ${s.ocrProblem}', style: style.copyWith(color: Colors.orangeAccent)),
+      ]),
     );
   }
 

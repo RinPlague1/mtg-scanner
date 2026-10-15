@@ -29,6 +29,9 @@ class AppSettings extends ChangeNotifier {
   SortBy sortBy = SortBy.added;
   bool sortDescending = true;
 
+  /// Scanner: show the raw text it reads, for troubleshooting.
+  bool showScanDebug = false;
+
   final JsonFile _file = JsonFile('settings.json');
 
   Future<void> load() async {
@@ -38,6 +41,7 @@ class AppSettings extends ChangeNotifier {
       collectionGrid = data['collectionGrid'] as bool? ?? false;
       sortBy = SortBy.values.firstWhere((s) => s.name == data['sortBy'], orElse: () => SortBy.added);
       sortDescending = data['sortDescending'] as bool? ?? true;
+      showScanDebug = data['showScanDebug'] as bool? ?? false;
     }
     notifyListeners();
   }
@@ -47,7 +51,14 @@ class AppSettings extends ChangeNotifier {
         'collectionGrid': collectionGrid,
         'sortBy': sortBy.name,
         'sortDescending': sortDescending,
+        'showScanDebug': showScanDebug,
       });
+
+  Future<void> setShowScanDebug(bool v) async {
+    showScanDebug = v;
+    notifyListeners();
+    await _save();
+  }
 
   Future<void> setNameMatching(NameMatching m) async {
     if (m == nameMatching) return;

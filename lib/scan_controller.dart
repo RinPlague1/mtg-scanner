@@ -67,6 +67,17 @@ class ScanController extends ChangeNotifier {
   bool autoAdd = false;
   int lastFrameMs = 0;
 
+  /// Debug info for "Show what the scanner reads".
+  List<String> lastNameLines = const [];
+  List<String> lastSetLines = const [];
+  SetInfo? lastSetInfo;
+  String? lastMatch;
+
+  /// Last text-recognition error (e.g. the model is still downloading), shown
+  /// in the status line instead of failing silently.
+  String? ocrProblem;
+  int framesAnalysed = 0;
+
   bool _busy = false;
   bool _paused = false;
   DateTime _lastFrame = DateTime.fromMillisecondsSinceEpoch(0);
@@ -191,6 +202,10 @@ class ScanController extends ChangeNotifier {
     final candidates = CardTextParser.nameCandidates(nameLines);
     final setInfo = CardTextParser.setInfo(setLines);
     lastRawName = candidates.isEmpty ? null : candidates.first;
+    lastNameLines = nameLines;
+    lastSetLines = setLines;
+    lastSetInfo = setInfo;
+    framesAnalysed++;
 
     _Read? read;
     for (final cand in candidates) {
@@ -211,6 +226,7 @@ class ScanController extends ChangeNotifier {
         }
       }
     }
+    lastMatch = read?.name;
     if (read != null && _voteKey(read.name) == _suppressName) read = null;
     if (read == null && candidates.isEmpty) _suppressName = null; // card removed
 
@@ -233,7 +249,13 @@ class ScanController extends ChangeNotifier {
       notifyListeners();
       await _resolve(winner);
     } else {
-      status = read != null ? 'Reading: ${read.name}' : 'Line the card up with the frame';
+      status = read != null
+          ? 'Reading: ${read.name}'
+          : ocrProblem != null
+              ? 'Text reader not working: $ocrProblem'
+              : (candidates.isNotEmpty && _index != null)
+                  ? 'Read "${candidates.first}" but it doesn\'t match a card name'
+                  : (a.sidesFound >= 3 ? 'Card found, reading the name…' : 'Line the card up with the frame');
       notifyListeners();
     }
   }
@@ -250,12 +272,17 @@ class ScanController extends ChangeNotifier {
     );
     try {
       final r = await _recognizer.processImage(input);
+      ocrProblem = null;
       return [
         for (final b in r.blocks)
           for (final l in b.lines) l.text,
       ];
     } catch (e) {
       debugPrint('OCR failed: $e');
+      final msg = e.toString();
+      ocrProblem = msg.toLowerCase().contains('download')
+          ? 'the text model is still downloading. Stay online for a minute and try again.'
+          : (msg.length > 120 ? '${msg.substring(0, 120)}…' : msg);
       return const [];
     }
   }

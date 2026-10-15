@@ -87,6 +87,16 @@ class _ScanSettingsSheetState extends State<_ScanSettingsSheet> {
                 style: theme.textTheme.bodySmall,
               ),
             ),
+            const Divider(height: 24),
+            SwitchListTile(
+              title: const Text('Show what the scanner reads'),
+              subtitle: const Text('Shows the raw text from the title and set line, for troubleshooting.'),
+              value: widget.settings.showScanDebug,
+              onChanged: (v) async {
+                await widget.settings.setShowScanDebug(v);
+                if (mounted) setState(() {});
+              },
+            ),
           ]),
         ),
       ),

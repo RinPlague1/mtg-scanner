@@ -46,10 +46,34 @@ class GuideOverlay extends CustomPainter {
           rect.left + r.right.clamp(0.0, 1.0) * rect.width,
           rect.top + r.bottom.clamp(0.0, 1.0) * rect.height,
         );
-    canvas.drawRect(sub(CardRegions.name), hint);
-    canvas.drawRect(sub(CardRegions.setLine), hint);
-
     final q = quad;
+    if (q != null && sidesFound >= 3) {
+      // Show the areas actually read, on the card that was found.
+      Path region(Box r) {
+        final pts = [
+          q.map(r.left, r.top),
+          q.map(r.right, r.top),
+          q.map(r.right, r.bottom),
+          q.map(r.left, r.bottom),
+        ];
+        final p = Path()..moveTo(pts[0].x * size.width, pts[0].y * size.height);
+        for (final pt in pts.skip(1)) {
+          p.lineTo(pt.x * size.width, pt.y * size.height);
+        }
+        return p..close();
+      }
+
+      final read = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..color = Colors.lightBlueAccent.withValues(alpha: 0.7);
+      canvas.drawPath(region(CardRegions.name), read);
+      canvas.drawPath(region(CardRegions.setLine), read);
+    } else {
+      canvas.drawRect(sub(CardRegions.name), hint);
+      canvas.drawRect(sub(CardRegions.setLine), hint);
+    }
+
     if (q != null && sidesFound > 0) {
       final p = Path()
         ..moveTo(q.pts[0].x * size.width, q.pts[0].y * size.height);
