@@ -158,6 +158,29 @@ class ScryfallClient {
     return out;
   }
 
+  /// One page of a Scryfall search (full search syntax, e.g. "t:shark c:u").
+  /// Returns no cards (not an error) when nothing matches.
+  Future<SearchPage> search(String query, {int page = 1, String order = 'name'}) async {
+    final j = await _get('/cards/search', {
+      'q': query,
+      'page': '$page',
+      'order': order,
+      'unique': 'cards',
+    });
+    if (j == null) return const SearchPage([], false, 0);
+    return SearchPage(
+      (j['data'] as List).map((e) => CardPrint.fromScryfall(e as Map<String, dynamic>)).toList(),
+      j['has_more'] as bool? ?? false,
+      j['total_cards'] as int? ?? 0,
+    );
+  }
+
+  /// Full Scryfall JSON for one printing (oracle text, legalities, links).
+  Future<Map<String, dynamic>?> cardJson(String id) => _get('/cards/${Uri.encodeComponent(id)}');
+
+  /// Full Scryfall JSON for a card by exact name (default printing).
+  Future<Map<String, dynamic>?> namedJson(String name) => _get('/cards/named', {'exact': name});
+
   /// Name suggestions for a search box.
   Future<List<String>> autocomplete(String q) async {
     if (q.trim().length < 2) return [];
@@ -228,4 +251,11 @@ class ScryfallClient {
       rethrow;
     }
   }
+}
+
+class SearchPage {
+  final List<CardPrint> cards;
+  final bool hasMore;
+  final int total;
+  const SearchPage(this.cards, this.hasMore, this.total);
 }

@@ -6,6 +6,7 @@ import 'collection_screen.dart';
 import 'decks_screen.dart';
 import 'friends_screen.dart';
 import 'scanner_screen.dart';
+import 'search_screen.dart';
 import 'trades_screen.dart';
 
 class HomeShell extends StatefulWidget {
@@ -45,8 +46,9 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     final body = switch (_tab) {
       0 => ScannerScreen(collection: s.collection, scryfall: s.scryfall, settings: s.settings, buffer: s.buffer),
       1 => CollectionScreen(services: s),
-      2 => DecksScreen(services: s),
-      3 => FriendsScreen(services: s),
+      2 => SearchScreen(services: s),
+      3 => DecksScreen(services: s),
+      4 => FriendsScreen(services: s),
       _ => TradesScreen(services: s),
     };
     return Scaffold(
@@ -66,6 +68,8 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                   .length;
           return NavigationBar(
             selectedIndex: _tab,
+            // Six tabs: show the label only on the selected one so they fit.
+            labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
             onDestinationSelected: (i) => setState(() => _tab = i),
             destinations: [
               NavigationDestination(
@@ -77,6 +81,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
                 label: 'Scan',
               ),
               const NavigationDestination(icon: Icon(Icons.collections_bookmark_outlined), label: 'Collection'),
+              const NavigationDestination(icon: Icon(Icons.search), label: 'Search'),
               const NavigationDestination(icon: Icon(Icons.layers_outlined), label: 'Decks'),
               NavigationDestination(
                 icon: Badge(isLabelVisible: requests > 0, label: Text('$requests'), child: const Icon(Icons.people_outline)),
