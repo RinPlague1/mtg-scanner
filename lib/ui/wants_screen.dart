@@ -87,7 +87,7 @@ class WantsScreen extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.all(16),
                         child: Text(
-                          'Friends see these. Total ≈ ${gbp(spares.fold(0.0, (n, c) => n + c.totalEur))}',
+                          'Friends see these. Total ≈ ${gbp(spares.fold<double>(0.0, (n, c) => n + c.totalEur))}',
                         ),
                       ),
                       for (final c in spares) TradeCardTile(c),

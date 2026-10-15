@@ -176,7 +176,7 @@ class Backend extends ChangeNotifier {
       }
       notifyListeners();
     });
-    if (signedIn) loadProfile().catchError((_) {});
+    if (signedIn) loadProfile().catchError((_) => null);
   }
 
   @override

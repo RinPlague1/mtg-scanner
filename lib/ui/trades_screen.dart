@@ -235,8 +235,8 @@ class TradeDetailScreen extends StatelessWidget {
                   padding: const EdgeInsets.all(16),
                   child: Wrap(spacing: 8, runSpacing: 8, children: actions),
                 ),
-              _side(context, 'You get · ${gbp(get.fold(0.0, (n, c) => n + c.totalEur))}', get),
-              _side(context, 'You give · ${gbp(give.fold(0.0, (n, c) => n + c.totalEur))}', give),
+              _side(context, 'You get · ${gbp(get.fold<double>(0.0, (n, c) => n + c.totalEur))}', get),
+              _side(context, 'You give · ${gbp(give.fold<double>(0.0, (n, c) => n + c.totalEur))}', give),
             ]),
           ),
         );
