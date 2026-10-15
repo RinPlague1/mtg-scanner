@@ -1,27 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'data/collection.dart';
-import 'data/scryfall.dart';
-import 'ui/scanner_screen.dart';
+import 'config.dart';
+import 'data/prices.dart';
+import 'services.dart';
+import 'ui/home_shell.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-  final collection = CollectionStore();
-  await collection.load();
-  runApp(DarkScannerApp(collection: collection, scryfall: ScryfallClient()));
+  await Fx.instance.load();
+  final services = await AppServices.create();
+  runApp(BinderApp(services: services));
 }
 
-class DarkScannerApp extends StatelessWidget {
-  final CollectionStore collection;
-  final ScryfallClient scryfall;
-  const DarkScannerApp({super.key, required this.collection, required this.scryfall});
+class BinderApp extends StatelessWidget {
+  final AppServices services;
+  const BinderApp({super.key, required this.services});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Dark Scanner',
+      title: AppConfig.appName,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
@@ -30,7 +30,7 @@ class DarkScannerApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: ScannerScreen(collection: collection, scryfall: scryfall),
+      home: HomeShell(services: services),
     );
   }
 }

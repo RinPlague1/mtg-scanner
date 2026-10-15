@@ -27,13 +27,27 @@ jobs:
 
       - run: flutter pub get
 
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
       - name: Unit tests
         run: flutter test
 
+      # Online features (friends, trades, sync) are switched on when these
+      # repository secrets exist: Settings → Secrets and variables → Actions.
+      # Without them the APK still builds and works offline.
       - name: Build APK
-        run: flutter build apk --release
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SHOWCASE_URL: ${{ secrets.SHOWCASE_URL }}
+        run: >
+          flutter build apk --release
+          --dart-define=SUPABASE_URL="$SUPABASE_URL"
+          --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+          --dart-define=SHOWCASE_URL="$SHOWCASE_URL"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dark-scanner-apk
+          name: mtg-binder-apk
           path: build/app/outputs/flutter-apk/app-release.apk

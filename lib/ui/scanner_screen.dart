@@ -2,15 +2,19 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 
 import '../data/collection.dart';
+import '../data/models.dart';
+import '../data/prices.dart';
 import '../data/scryfall.dart';
+import '../data/settings.dart';
 import '../scan_controller.dart';
-import 'collection_screen.dart';
 import 'guide_overlay.dart';
+import 'scan_settings_sheet.dart';
 
 class ScannerScreen extends StatefulWidget {
   final CollectionStore collection;
   final ScryfallClient scryfall;
-  const ScannerScreen({super.key, required this.collection, required this.scryfall});
+  final AppSettings settings;
+  const ScannerScreen({super.key, required this.collection, required this.scryfall, required this.settings});
 
   @override
   State<ScannerScreen> createState() => _ScannerScreenState();
@@ -21,17 +25,27 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
   String? _error;
   bool _foil = false;
   bool _autoAdd = false;
+  Binder _binder = Binder.collection;
   ScanHit? _autoAddedHit;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.settings.addListener(_settingsChanged);
     _start();
   }
 
+  /// Apply a name-matching change to the running scanner.
+  void _settingsChanged() {
+    _scan?.setUseNameList(widget.settings.nameMatching == NameMatching.offlineList);
+  }
+
   Future<void> _start() async {
-    final s = ScanController(widget.scryfall);
+    final s = ScanController(
+      widget.scryfall,
+      useNameList: widget.settings.nameMatching == NameMatching.offlineList,
+    );
     s.addListener(_onScanChanged);
     s.setAutoAdd(_autoAdd);
     setState(() {
@@ -64,9 +78,9 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
     if (s.autoAdd && s.hit != null && !identical(s.hit, _autoAddedHit)) {
       _autoAddedHit = s.hit;
       final card = s.hit!.card;
-      widget.collection.add(card, foil: _foil);
+      widget.collection.add(card, foil: _foil, binder: _binder);
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Added ${card.name}'),
+        content: Text('Added ${card.name} to ${_binder.label}'),
         duration: const Duration(milliseconds: 1200),
       ));
       Future.delayed(const Duration(milliseconds: 600), () => _scan?.resume(suppressCurrent: true));
@@ -87,6 +101,7 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.settings.removeListener(_settingsChanged);
     _stop();
     super.dispose();
   }
@@ -99,21 +114,32 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
       backgroundColor: Colors.black,
       appBar: AppBar(
         backgroundColor: Colors.black,
-        title: const Text('Dark Scanner'),
+        title: const Text('Scan'),
         actions: [
           IconButton(
             tooltip: 'Torch',
             icon: Icon(s?.torchOn == true ? Icons.flashlight_on : Icons.flashlight_off),
             onPressed: s == null ? null : s.toggleTorch,
           ),
-          ListenableBuilder(
-            listenable: widget.collection,
-            builder: (context, _) => TextButton.icon(
-              icon: const Icon(Icons.collections_bookmark),
-              label: Text('${widget.collection.totalCards}'),
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => CollectionScreen(collection: widget.collection),
-              )),
+          IconButton(
+            tooltip: 'Scanner settings',
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => showScanSettings(context, widget.settings, widget.scryfall),
+          ),
+          PopupMenuButton<Binder>(
+            tooltip: 'Scanned cards go to',
+            initialValue: _binder,
+            onSelected: (b) => setState(() => _binder = b),
+            itemBuilder: (_) => [
+              for (final b in Binder.values) PopupMenuItem(value: b, child: Text(b.label)),
+            ],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(children: [
+                const Icon(Icons.move_to_inbox, size: 18),
+                const SizedBox(width: 4),
+                Text(_binder.label),
+              ]),
             ),
           ),
         ],
@@ -206,10 +232,9 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
   Widget _resultPanel(ScanController s) {
     final hit = s.hit!;
     final c = hit.card;
-    final price = _foil ? (c.priceEurFoil ?? c.priceUsdFoil) : (c.priceEur ?? c.priceUsd);
-    final currency = _foil
-        ? (c.priceEurFoil != null ? '€' : r'$')
-        : (c.priceEur != null ? '€' : r'$');
+    final eur = double.tryParse((_foil ? c.priceEurFoil : c.priceEur) ?? '');
+    final usd = _foil ? c.priceUsdFoil : c.priceUsd;
+    final priceText = eur != null ? gbp(eur) : (usd != null ? '\$$usd' : null);
     return SafeArea(
       top: false,
       child: Card(
@@ -235,15 +260,15 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
                   Text(hit.exactPrinting ? 'Exact printing' : 'Printing guessed',
                       style: Theme.of(context).textTheme.labelSmall),
                   const Spacer(),
-                  if (price != null) Text('$currency$price'),
+                  if (priceText != null) Text(priceText),
                 ]),
                 const SizedBox(height: 8),
                 Wrap(spacing: 8, runSpacing: 4, children: [
                   FilledButton.icon(
                     icon: const Icon(Icons.add),
-                    label: const Text('Add'),
+                    label: Text(_binder == Binder.collection ? 'Add' : 'Add to ${_binder.label}'),
                     onPressed: () {
-                      widget.collection.add(c, foil: _foil);
+                      widget.collection.add(c, foil: _foil, binder: _binder);
                       s.resume(suppressCurrent: true);
                     },
                   ),
@@ -289,7 +314,9 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
                   leading: p.imageUrl == null ? null : Image.network(p.imageUrl!, width: 36),
                   title: Text('${p.setName} (${p.setCode.toUpperCase()})'),
                   subtitle: Text('#${p.collectorNumber} · ${p.rarity}'),
-                  trailing: Text(p.priceEur != null ? '€${p.priceEur}' : (p.priceUsd != null ? '\$${p.priceUsd}' : '')),
+                  trailing: Text(p.priceEur != null
+                      ? gbp(double.tryParse(p.priceEur!))
+                      : (p.priceUsd != null ? '\$${p.priceUsd}' : '')),
                   onTap: () => Navigator.of(ctx).pop(p),
                 );
               },

@@ -1,7 +1,7 @@
 name: mtg_dark_scanner
-description: MTG card scanner tuned for black-bordered and black-frame cards on dark playmats.
+description: MTG collection app with a dark-card scanner, binders, decks, friends and trade suggestions.
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.2.0+2
 
 environment:
   sdk: ^3.12.0
@@ -11,10 +11,12 @@ dependencies:
   flutter:
     sdk: flutter
   camera: ^0.12.1
+  file_selector: ^1.0.3
   google_mlkit_text_recognition: ^0.17.1
   http: ^1.6.0
   path_provider: ^2.1.6
   share_plus: ^13.3.0
+  supabase_flutter: ^2.8.0
 
 dev_dependencies:
   flutter_test:

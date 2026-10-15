@@ -32,7 +32,25 @@ class _Read {
 /// votes across frames, and resolves the card on Scryfall.
 class ScanController extends ChangeNotifier {
   final ScryfallClient scryfall;
-  ScanController(this.scryfall);
+
+  /// False = don't download the card-name list; every scan's text is sent to
+  /// Scryfall's fuzzy search instead (needs a connection).
+  bool useNameList;
+  ScanController(this.scryfall, {this.useNameList = true});
+
+  /// Switch name matching without restarting the camera.
+  void setUseNameList(bool v) {
+    if (v == useNameList) return;
+    useNameList = v;
+    _reads.clear();
+    if (v) {
+      unawaited(_loadIndex());
+    } else {
+      _index = null;
+      if (hint == ScanHint.offline) hint = ScanHint.none;
+    }
+    notifyListeners();
+  }
 
   CameraController? camera;
   final _recognizer = TextRecognizer(script: TextRecognitionScript.latin);
@@ -64,7 +82,7 @@ class ScanController extends ChangeNotifier {
   static Future<NameIndex> _buildIndex(List<String> names) => Isolate.run(() => NameIndex(names));
 
   Future<void> init() async {
-    unawaited(_loadIndex());
+    if (useNameList) unawaited(_loadIndex());
     final cams = await availableCameras();
     final back = cams.firstWhere(
       (c) => c.lensDirection == CameraLensDirection.back,
@@ -91,7 +109,8 @@ class ScanController extends ChangeNotifier {
   Future<void> _loadIndex() async {
     try {
       final names = await scryfall.cardNames();
-      _index = await _buildIndex(names);
+      final index = await _buildIndex(names);
+      if (useNameList) _index = index; // ignore if switched to online meanwhile
     } catch (_) {
       hint = ScanHint.offline; // falls back to Scryfall fuzzy search per scan
       notifyListeners();
@@ -113,7 +132,8 @@ class ScanController extends ChangeNotifier {
 
   /// Resume after a hit has been handled (added or dismissed).
   void resume({bool suppressCurrent = false}) {
-    _suppressName = suppressCurrent ? hit?.card.name : null;
+    final current = hit?.card.name;
+    _suppressName = suppressCurrent && current != null ? _voteKey(current) : null;
     hit = null;
     _reads.clear();
     _paused = false;
@@ -182,11 +202,16 @@ class ScanController extends ChangeNotifier {
           break;
         }
       } else {
-        read = _Read(cand, setInfo); // offline index: raw text, fuzzy later
-        break;
+        // No name list (online mode, or it couldn't download): vote on the
+        // cleaned-up OCR text and let Scryfall's fuzzy search resolve it.
+        final clean = _cleanOcrName(cand);
+        if (clean.length >= 3) {
+          read = _Read(clean, setInfo);
+          break;
+        }
       }
     }
-    if (read != null && read.name == _suppressName) read = null;
+    if (read != null && _voteKey(read.name) == _suppressName) read = null;
     if (read == null && candidates.isEmpty) _suppressName = null; // card removed
 
     _reads.add(read);
@@ -198,7 +223,7 @@ class ScanController extends ChangeNotifier {
             ? ScanHint.tooDark
             : (read == null && a.sidesFound < 2)
                 ? ScanHint.noEdges
-                : (_index == null ? ScanHint.offline : ScanHint.none);
+                : (_index == null && useNameList ? ScanHint.offline : ScanHint.none);
 
     final winner = _vote();
     if (winner != null) {
@@ -235,12 +260,25 @@ class ScanController extends ChangeNotifier {
     }
   }
 
+  /// Raw OCR text varies a little between frames ("Sol Ring" / "Sol Rinq"
+  /// stays distinct, but case, spacing and stray punctuation shouldn't).
+  static String _voteKey(String name) =>
+      name.toLowerCase().replaceAll(RegExp(r"[^a-z0-9' ,\-/]"), '').replaceAll(RegExp(r'\s+'), ' ').trim();
+
+  static String _cleanOcrName(String raw) => raw
+      .replaceAll(RegExp(r"[^A-Za-z0-9À-ÿ' ,\-/]"), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+
   /// Two agreeing reads out of the last four frames.
   _Read? _vote() {
     final counts = <String, int>{};
+    final display = <String, String>{};
     for (final r in _reads) {
       if (r == null) continue;
-      counts[r.name] = (counts[r.name] ?? 0) + 1;
+      final k = _voteKey(r.name);
+      counts[k] = (counts[k] ?? 0) + 1;
+      display.putIfAbsent(k, () => r.name);
     }
     String? best;
     var bestN = 0;
@@ -255,7 +293,7 @@ class ScanController extends ChangeNotifier {
     final sets = <SetInfo, int>{};
     SetInfo? partial;
     for (final r in _reads) {
-      if (r == null || r.name != best || r.set == null) continue;
+      if (r == null || _voteKey(r.name) != best || r.set == null) continue;
       if (r.set!.complete) {
         sets[r.set!] = (sets[r.set!] ?? 0) + 1;
       } else {
@@ -270,7 +308,7 @@ class ScanController extends ChangeNotifier {
         setN = n;
       }
     });
-    return _Read(best!, chosen ?? partial);
+    return _Read(display[best]!, chosen ?? partial);
   }
 
   Future<void> _resolve(_Read r) async {
@@ -288,6 +326,9 @@ class ScanController extends ChangeNotifier {
       if (card == null && _index != null) {
         card = await scryfall.named(r.name, set: s?.setCode);
         card ??= await scryfall.named(r.name);
+      }
+      if (card == null && _index == null && s?.setCode != null) {
+        card = await scryfall.named(r.name, set: s!.setCode, fuzzy: true);
       }
       card ??= await scryfall.named(r.name, fuzzy: true);
       if (card == null) {

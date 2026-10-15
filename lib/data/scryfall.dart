@@ -109,6 +109,39 @@ class ScryfallClient {
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
 
+  Future<Map<String, dynamic>> _post(String path, Object body) async {
+    final wait = const Duration(milliseconds: 110) - DateTime.now().difference(_last);
+    if (!wait.isNegative) await Future<void>.delayed(wait);
+    _last = DateTime.now();
+    final uri = Uri.parse('$_base$path');
+    final res = await _http
+        .post(uri, headers: {..._headers, 'Content-Type': 'application/json'}, body: jsonEncode(body))
+        .timeout(const Duration(seconds: 20));
+    if (res.statusCode != 200) {
+      throw HttpException('Scryfall ${res.statusCode}: ${res.body}', uri: uri);
+    }
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  /// Bulk lookup (POST /cards/collection), 75 identifiers per request.
+  /// Identifiers: {'id': …} | {'set': …, 'collector_number': …} | {'name': …, 'set'?: …}.
+  Future<List<CardPrint>> collection(List<Map<String, String>> identifiers) async {
+    final out = <CardPrint>[];
+    for (var i = 0; i < identifiers.length; i += 75) {
+      final chunk = identifiers.sublist(i, i + 75 > identifiers.length ? identifiers.length : i + 75);
+      final j = await _post('/cards/collection', {'identifiers': chunk});
+      out.addAll((j['data'] as List).map((e) => CardPrint.fromScryfall(e as Map<String, dynamic>)));
+    }
+    return out;
+  }
+
+  /// Name suggestions for a search box.
+  Future<List<String>> autocomplete(String q) async {
+    if (q.trim().length < 2) return [];
+    final j = await _get('/cards/autocomplete', {'q': q.trim()});
+    return ((j?['data'] as List?) ?? const []).cast<String>();
+  }
+
   Future<CardPrint?> bySetAndNumber(String set, String number) async {
     final j = await _get('/cards/${Uri.encodeComponent(set)}/${Uri.encodeComponent(number)}');
     return j == null ? null : CardPrint.fromScryfall(j);
@@ -134,10 +167,26 @@ class ScryfallClient {
         .toList();
   }
 
+  Future<File> _cardNamesFile() async {
+    final dir = await getApplicationSupportDirectory();
+    return File('${dir.path}/card-names.json');
+  }
+
+  /// Size in bytes of the downloaded name list, or null if there isn't one.
+  Future<int?> cardNamesSize() async {
+    final f = await _cardNamesFile();
+    return await f.exists() ? await f.length() : null;
+  }
+
+  /// Remove the downloaded name list (when switching to online matching).
+  Future<void> deleteCardNames() async {
+    final f = await _cardNamesFile();
+    if (await f.exists()) await f.delete();
+  }
+
   /// Every English card name, cached on disk and refreshed weekly.
   Future<List<String>> cardNames() async {
-    final dir = await getApplicationSupportDirectory();
-    final file = File('${dir.path}/card-names.json');
+    final file = await _cardNamesFile();
     if (await file.exists()) {
       final age = DateTime.now().difference(await file.lastModified());
       if (age < const Duration(days: 7)) {

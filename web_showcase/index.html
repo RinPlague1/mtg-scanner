@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MTG Showcase</title>
+<style>
+  :root { --bg:#14121a; --card:#1f1c27; --text:#ece9f3; --muted:#a39fb0; --accent:#9b7fe0; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding:28px 16px 8px; max-width:1100px; margin:0 auto; }
+  h1 { margin:0; font-size:26px; }
+  p.sub { margin:4px 0 0; color:var(--muted); }
+  main { max-width:1100px; margin:0 auto; padding:16px; display:grid; gap:14px; grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); }
+  figure { margin:0; background:var(--card); border-radius:12px; overflow:hidden; position:relative; }
+  figure img { width:100%; display:block; aspect-ratio:488/680; object-fit:cover; }
+  figcaption { padding:8px 10px; font-size:14px; }
+  .tag { position:absolute; top:8px; right:8px; background:rgba(0,0,0,.7); color:#fff; border-radius:999px; padding:2px 8px; font-size:13px; }
+  .foil { color:#f5d36b; }
+  .msg { max-width:600px; margin:60px auto; text-align:center; color:var(--muted); padding:0 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Showcase</h1>
+  <p class="sub" id="sub">Loading…</p>
+</header>
+<main id="grid"></main>
+<script>
+// Link format: index.html#u=<supabase url>&k=<anon key>&t=<share token>
+// The anon key is public by design; the token only unlocks this read-only Showcase.
+(async function () {
+  const p = new URLSearchParams(location.hash.slice(1));
+  const u = p.get('u'), k = p.get('k'), t = p.get('t');
+  const sub = document.getElementById('sub');
+  const grid = document.getElementById('grid');
+  const fail = (msg) => { sub.textContent = ''; grid.outerHTML = '<p class="msg">' + msg + '</p>'; };
+  if (!u || !k || !t) return fail('This link is incomplete.');
+  try {
+    const res = await fetch(u.replace(/\/$/, '') + '/rest/v1/rpc/get_public_showcase', {
+      method: 'POST',
+      headers: { apikey: k, Authorization: 'Bearer ' + k, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: t }),
+    });
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    if (!data) return fail('This Showcase link has been reset or no longer exists.');
+    const name = data.display_name || data.username;
+    document.title = name + "'s MTG Showcase";
+    document.getElementById('title').textContent = name + "'s Showcase";
+    const total = data.cards.reduce((n, c) => n + c.qty, 0);
+    sub.textContent = total + (total === 1 ? ' card' : ' cards') + ' · not for trade';
+    if (!data.cards.length) return fail('Nothing in this Showcase yet.');
+    for (const c of data.cards) {
+      const card = c.card || {};
+      const img = (card.image_uris || {}).normal;
+      const fig = document.createElement('figure');
+      if (img) {
+        const el = document.createElement('img');
+        el.src = img; el.alt = card.name || ''; el.loading = 'lazy';
+        fig.appendChild(el);
+      }
+      const cap = document.createElement('figcaption');
+      cap.textContent = (card.name || '') + ' · ' + String(card.set || '').toUpperCase();
+      if (c.foil) { const f = document.createElement('span'); f.className = 'foil'; f.textContent = ' ✦'; cap.appendChild(f); }
+      fig.appendChild(cap);
+      if (c.qty > 1) { const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = '×' + c.qty; fig.appendChild(tag); }
+      grid.appendChild(fig);
+    }
+  } catch (e) {
+    fail('Could not load this Showcase. Check your connection and try again.');
+  }
+})();
+</script>
+</body>
+</html>
