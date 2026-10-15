@@ -56,7 +56,8 @@ class ScanController extends ChangeNotifier {
   }
 
   CameraController? camera;
-  final _recognizer = TextRecognizer(script: TextRecognitionScript.latin);
+  TextRecognizer _recognizer = TextRecognizer(script: TextRecognitionScript.latin);
+  bool _recognizerRecreated = false;
   NameIndex? _index;
 
   // live state for the UI
@@ -263,24 +264,34 @@ class ScanController extends ChangeNotifier {
     }
   }
 
-  /// Some phones' ML Kit can't take raw NV21 bytes (InputImageConverterError).
-  /// After the first such failure, crops are written to small BMP files in the
-  /// cache folder and read from there instead.
-  bool _ocrViaFile = false;
-  bool get ocrViaFile => _ocrViaFile;
+  /// How crops are handed to ML Kit. Some phones' plugin builds fail on raw
+  /// NV21 bytes (InputImageConverterError) or on file paths (a native
+  /// NullPointerException), so on an error we move to the next way and retry.
+  static const ocrInputModes = ['bytes', 'bitmap', 'file'];
+  int _ocrMode = 0;
+  String get ocrInputMode => ocrInputModes[_ocrMode];
   String? _cacheDir;
 
-  Future<List<String>> _ocr(OcrCrop crop, String tag) async {
-    try {
-      final InputImage input;
-      if (_ocrViaFile) {
+  Future<InputImage> _inputFor(OcrCrop crop, String tag) async {
+    final gray = Uint8List.sublistView(crop.nv21, 0, crop.width * crop.height);
+    switch (ocrInputMode) {
+      case 'bitmap':
+        final rgba = Uint8List(crop.width * crop.height * 4);
+        for (var i = 0, j = 0; i < gray.length; i++, j += 4) {
+          final v = gray[i];
+          rgba[j] = v;
+          rgba[j + 1] = v;
+          rgba[j + 2] = v;
+          rgba[j + 3] = 255;
+        }
+        return InputImage.fromBitmap(bitmap: rgba, width: crop.width, height: crop.height);
+      case 'file':
         _cacheDir ??= (await getTemporaryDirectory()).path;
         final path = '$_cacheDir/ocr_$tag.bmp';
-        final gray = Uint8List.sublistView(crop.nv21, 0, crop.width * crop.height);
         await File(path).writeAsBytes(grayToBmp(gray, crop.width, crop.height), flush: true);
-        input = InputImage.fromFilePath(path);
-      } else {
-        input = InputImage.fromBytes(
+        return InputImage.fromFilePath(path);
+      default:
+        return InputImage.fromBytes(
           bytes: crop.nv21,
           metadata: InputImageMetadata(
             size: Size(crop.width.toDouble(), crop.height.toDouble()),
@@ -289,27 +300,45 @@ class ScanController extends ChangeNotifier {
             bytesPerRow: crop.width,
           ),
         );
-      }
-      final r = await _recognizer.processImage(input);
+    }
+  }
+
+  /// Errors seen per input mode, for the troubleshooting panel.
+  final Map<String, String> ocrErrors = {};
+
+  Future<List<String>> _ocr(OcrCrop crop, String tag) async {
+    try {
+      final r = await _recognizer.processImage(await _inputFor(crop, tag));
       ocrProblem = null;
       return [
         for (final b in r.blocks)
           for (final l in b.lines) l.text,
       ];
     } catch (e) {
-      debugPrint('OCR failed: $e');
+      debugPrint('OCR failed ($ocrInputMode): $e');
       final msg = e.toString();
-      if (!_ocrViaFile && msg.contains('InputImageConverterError')) {
-        // Switch to file input and retry this crop straight away.
-        _ocrViaFile = true;
+      ocrErrors[ocrInputMode] = msg.length > 300 ? '${msg.substring(0, 300)}…' : msg;
+      if (msg.toLowerCase().contains('download')) {
+        ocrProblem = 'the text model is still downloading. Stay online for a minute and try again.';
+        return const [];
+      }
+      if (_ocrMode < ocrInputModes.length - 1) {
+        _ocrMode++;
+        return _ocr(crop, tag); // retry this crop the next way
+      }
+      if (!_recognizerRecreated) {
+        // Every way failed: start a fresh recognizer once and go round again.
+        _recognizerRecreated = true;
+        unawaited(_recognizer.close());
+        _recognizer = TextRecognizer(script: TextRecognitionScript.latin);
+        _ocrMode = 0;
         return _ocr(crop, tag);
       }
-      ocrProblem = msg.toLowerCase().contains('download')
-          ? 'the text model is still downloading. Stay online for a minute and try again.'
-          : msg;
+      ocrProblem = msg;
       return const [];
     }
   }
+
 
 
   /// Raw OCR text varies a little between frames ("Sol Ring" / "Sol Rinq"

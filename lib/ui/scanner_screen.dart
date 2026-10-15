@@ -206,16 +206,16 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
         Text('Set line:   ${lines(s.lastSetLines)}', style: style, maxLines: 2, overflow: TextOverflow.ellipsis),
         Text(
           'Parsed set: ${s.lastSetInfo ?? '-'}  ·  match: ${s.lastMatch ?? '-'}  ·  '
-          '${s.useNameList ? 'name list' : 'Scryfall online'}  ·  OCR input: ${s.ocrViaFile ? 'file' : 'bytes'}  ·  '
+          '${s.useNameList ? 'name list' : 'Scryfall online'}  ·  OCR input: ${s.ocrInputMode}  ·  '
           'frames ${s.framesAnalysed} (${s.lastFrameMs} ms)',
           style: style,
         ),
-        if (s.ocrProblem != null)
+        if (s.ocrErrors.isNotEmpty)
           ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 120),
+            constraints: const BoxConstraints(maxHeight: 140),
             child: SingleChildScrollView(
               child: SelectableText(
-                'OCR error: ${s.ocrProblem}',
+                [for (final e in s.ocrErrors.entries) 'OCR error (${e.key}): ${e.value}'].join('\n\n'),
                 style: style.copyWith(color: Colors.orangeAccent),
               ),
             ),
