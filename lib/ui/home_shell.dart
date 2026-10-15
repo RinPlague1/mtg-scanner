@@ -43,7 +43,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     final s = widget.services;
     // Only the visible tab is built, so the camera is released when you leave Scan.
     final body = switch (_tab) {
-      0 => ScannerScreen(collection: s.collection, scryfall: s.scryfall, settings: s.settings),
+      0 => ScannerScreen(collection: s.collection, scryfall: s.scryfall, settings: s.settings, buffer: s.buffer),
       1 => CollectionScreen(services: s),
       2 => DecksScreen(services: s),
       3 => FriendsScreen(services: s),
@@ -52,8 +52,9 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     return Scaffold(
       body: body,
       bottomNavigationBar: ListenableBuilder(
-        listenable: s.social,
+        listenable: Listenable.merge([s.social, s.buffer]),
         builder: (context, _) {
+          final scanned = s.buffer.count;
           final me = s.backend.uid;
           final requests = s.social.incomingRequests.length;
           final waiting = me == null
@@ -67,7 +68,14 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
             selectedIndex: _tab,
             onDestinationSelected: (i) => setState(() => _tab = i),
             destinations: [
-              const NavigationDestination(icon: Icon(Icons.document_scanner_outlined), label: 'Scan'),
+              NavigationDestination(
+                icon: Badge(
+                  isLabelVisible: scanned > 0,
+                  label: Text('$scanned'),
+                  child: const Icon(Icons.document_scanner_outlined),
+                ),
+                label: 'Scan',
+              ),
               const NavigationDestination(icon: Icon(Icons.collections_bookmark_outlined), label: 'Collection'),
               const NavigationDestination(icon: Icon(Icons.layers_outlined), label: 'Decks'),
               NavigationDestination(

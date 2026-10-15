@@ -19,6 +19,16 @@ class CardPrint {
   final String? priceUsdFoil;
   final List<String> finishes;
 
+  /// Colour identity letters (W U B R G); empty = colourless. Older saved
+  /// cards may not have it until "Refresh card details" runs.
+  final List<String> colorIdentity;
+  final String typeLine;
+
+  /// Mana value; null when unknown.
+  final double? cmc;
+
+  bool get hasDetails => typeLine.isNotEmpty;
+
   CardPrint({
     required this.id,
     required this.name,
@@ -32,6 +42,9 @@ class CardPrint {
     this.priceUsd,
     this.priceUsdFoil,
     this.finishes = const ['nonfoil'],
+    this.colorIdentity = const [],
+    this.typeLine = '',
+    this.cmc,
   });
 
   factory CardPrint.fromScryfall(Map<String, dynamic> j) {
@@ -41,6 +54,10 @@ class CardPrint {
       img = ((faces.first as Map)['image_uris'] as Map?)?['normal'] as String?;
     }
     final prices = (j['prices'] as Map?) ?? const {};
+    var typeLine = j['type_line'] as String?;
+    if (typeLine == null && faces != null && faces.isNotEmpty) {
+      typeLine = (faces.first as Map)['type_line'] as String?;
+    }
     return CardPrint(
       id: j['id'] as String,
       name: j['name'] as String,
@@ -54,6 +71,9 @@ class CardPrint {
       priceUsd: prices['usd'] as String?,
       priceUsdFoil: prices['usd_foil'] as String?,
       finishes: ((j['finishes'] as List?) ?? const ['nonfoil']).cast<String>(),
+      colorIdentity: ((j['color_identity'] as List?) ?? const []).cast<String>(),
+      typeLine: typeLine ?? '',
+      cmc: (j['cmc'] as num?)?.toDouble(),
     );
   }
 
@@ -72,6 +92,9 @@ class CardPrint {
           'usd_foil': priceUsdFoil,
         },
         'finishes': finishes,
+        'color_identity': colorIdentity,
+        if (typeLine.isNotEmpty) 'type_line': typeLine,
+        if (cmc != null) 'cmc': cmc,
       };
 
   /// Name match that tolerates double-faced "A // B" names.

@@ -8,12 +8,17 @@ import 'models.dart';
 import 'scryfall.dart';
 
 class CollectionEntry {
-  final CardPrint card;
+  /// Replaced when card details are refreshed (same printing id).
+  CardPrint card;
   final bool foil;
   final Binder binder;
   final CardCondition condition;
   int quantity;
   final DateTime added;
+
+  /// Your own labels, e.g. "Aang staples", "To sell". Not part of the
+  /// entry's identity: moving copies keeps their tags.
+  final Set<String> tags;
 
   CollectionEntry(
     this.card, {
@@ -22,7 +27,9 @@ class CollectionEntry {
     this.binder = Binder.collection,
     this.condition = CardCondition.nm,
     DateTime? added,
-  }) : added = added ?? DateTime.now();
+    Set<String>? tags,
+  })  : added = added ?? DateTime.now(),
+        tags = tags ?? {};
 
   static String keyFor(CardPrint card, bool foil, Binder binder, CardCondition condition) =>
       '${card.id}|${foil ? 'f' : 'n'}|${binder.id}|${condition.code}';
@@ -40,6 +47,7 @@ class CollectionEntry {
         'binder': binder.id,
         'condition': condition.code,
         'added': added.toIso8601String(),
+        if (tags.isNotEmpty) 'tags': tags.toList()..sort(),
       };
 
   /// Row shape for the server (see supabase/schema.sql → replace_my_collection).
@@ -52,6 +60,7 @@ class CollectionEntry {
         'binder': binder.id,
         'condition': condition.code,
         'added': added.toUtc().toIso8601String(),
+        'tags': tags.toList()..sort(),
       };
 
   factory CollectionEntry.fromJson(Map<String, dynamic> j) => CollectionEntry(
@@ -61,6 +70,7 @@ class CollectionEntry {
         binder: Binder.parse(j['binder'] as String?),
         condition: CardCondition.parse(j['condition'] as String?),
         added: DateTime.tryParse(j['added'] as String? ?? ''),
+        tags: ((j['tags'] as List?) ?? const []).cast<String>().toSet(),
       );
 }
 
@@ -97,18 +107,21 @@ class CollectionStore extends ChangeNotifier {
   Future<void> _save() => _file.write(_entries.map((e) => e.toJson()).toList());
 
   void _merge(CardPrint card, bool foil, int quantity, Binder binder, CardCondition condition,
-      {bool toFront = true}) {
+      {bool toFront = true, Set<String> tags = const {}}) {
     final key = CollectionEntry.keyFor(card, foil, binder, condition);
     final i = _entries.indexWhere((e) => e.key == key);
     if (i >= 0) {
       _entries[i].quantity += quantity;
+      _entries[i].tags.addAll(tags);
       if (toFront) {
         final e = _entries.removeAt(i);
         _entries.insert(0, e); // most recent first
       }
     } else {
       _entries.insert(
-          0, CollectionEntry(card, foil: foil, quantity: quantity, binder: binder, condition: condition));
+          0,
+          CollectionEntry(card,
+              foil: foil, quantity: quantity, binder: binder, condition: condition, tags: {...tags}));
     }
   }
 
@@ -127,7 +140,7 @@ class CollectionStore extends ChangeNotifier {
   /// Bulk add (imports). One save and one notification.
   Future<void> addAll(Iterable<CollectionEntry> items) async {
     for (final e in items) {
-      _merge(e.card, e.foil, e.quantity, e.binder, e.condition);
+      _merge(e.card, e.foil, e.quantity, e.binder, e.condition, tags: e.tags);
     }
     notifyListeners();
     await _save();
@@ -145,11 +158,17 @@ class CollectionStore extends ChangeNotifier {
 
   /// Move [qty] copies of [e] to another binder and/or condition.
   Future<void> move(CollectionEntry e, int qty, {Binder? binder, CardCondition? condition}) async {
+    if (!_moveNoSave(e, qty, binder: binder, condition: condition)) return;
+    notifyListeners();
+    await _save();
+  }
+
+  bool _moveNoSave(CollectionEntry e, int qty, {Binder? binder, CardCondition? condition}) {
     final n = qty.clamp(0, e.quantity);
-    if (n == 0) return;
+    if (n == 0) return false;
     final b = binder ?? e.binder;
     final c = condition ?? e.condition;
-    if (b == e.binder && c == e.condition) return;
+    if (b == e.binder && c == e.condition) return false;
     final index = _entries.indexOf(e);
     e.quantity -= n;
     if (e.quantity == 0) _entries.remove(e);
@@ -157,13 +176,98 @@ class CollectionStore extends ChangeNotifier {
     final existing = _entries.where((x) => x.key == key).firstOrNull;
     if (existing != null) {
       existing.quantity += n;
+      existing.tags.addAll(e.tags);
     } else {
-      final moved =
-          CollectionEntry(e.card, foil: e.foil, quantity: n, binder: b, condition: c, added: e.added);
+      final moved = CollectionEntry(e.card,
+          foil: e.foil, quantity: n, binder: b, condition: c, added: e.added, tags: {...e.tags});
       _entries.insert(index.clamp(0, _entries.length), moved);
+    }
+    return true;
+  }
+
+  // ───────── Bulk edits (multi-select) ─────────
+
+  /// Move every copy of each entry to [binder] and/or [condition].
+  Future<void> moveAll(Iterable<CollectionEntry> items, {Binder? binder, CardCondition? condition}) async {
+    var changed = false;
+    for (final e in items.toList()) {
+      changed = _moveNoSave(e, e.quantity, binder: binder, condition: condition) || changed;
+    }
+    if (!changed) return;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> removeAll(Iterable<CollectionEntry> items) async {
+    final set = items.toSet();
+    _entries.removeWhere(set.contains);
+    notifyListeners();
+    await _save();
+  }
+
+  // ───────── Tags ─────────
+
+  /// Every tag in use, alphabetical.
+  List<String> get allTags {
+    final s = <String>{for (final e in _entries) ...e.tags};
+    return s.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  }
+
+  int countTagged(String tag) =>
+      _entries.where((e) => e.tags.contains(tag)).fold(0, (n, e) => n + e.quantity);
+
+  Future<void> tagAll(Iterable<CollectionEntry> items, {Set<String> add = const {}, Set<String> remove = const {}}) async {
+    for (final e in items) {
+      e.tags
+        ..removeAll(remove)
+        ..addAll(add);
     }
     notifyListeners();
     await _save();
+  }
+
+  Future<void> renameTag(String from, String to) async {
+    final name = to.trim();
+    if (name.isEmpty || name == from) return;
+    for (final e in _entries) {
+      if (e.tags.remove(from)) e.tags.add(name);
+    }
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> deleteTag(String tag) async {
+    for (final e in _entries) {
+      e.tags.remove(tag);
+    }
+    notifyListeners();
+    await _save();
+  }
+
+  // ───────── Card details ─────────
+
+  int get missingDetails => _entries.where((e) => !e.card.hasDetails && !e.card.id.startsWith('trade-')).length;
+
+  /// Fill in colour, type and mana value for cards saved before those were
+  /// stored. Looks up each printing on Scryfall (75 per request). Returns how
+  /// many entries were updated.
+  Future<int> refreshDetails(ScryfallClient scryfall) async {
+    final need = _entries.where((e) => !e.card.hasDetails && !e.card.id.startsWith('trade-')).toList();
+    if (need.isEmpty) return 0;
+    final ids = {for (final e in need) e.card.id};
+    final cards = await scryfall.collection(ids.map((id) => {'id': id}).toList());
+    final byId = {for (final c in cards) c.id: c};
+    var n = 0;
+    for (final e in need) {
+      final fresh = byId[e.card.id];
+      if (fresh != null) {
+        e.card = fresh;
+        n++;
+      }
+    }
+    notifyListeners();
+    await _save();
+    return n;
   }
 
   /// Replace everything (restore from the server on a new phone).

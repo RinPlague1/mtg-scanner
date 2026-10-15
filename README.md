@@ -4,6 +4,8 @@ A Flutter (Android-first) MTG collection app in the spirit of ManaBox, with:
 
 - **A scanner that copes with black cards** on dark playmats (details below).
 - **Binders:** *Showcase* (not for trade; friends can see it, plus a public share link for flexing), *Up for trade* (offered first), and the default *Collection*.
+- **Organising:** sort (date added, name, price, set, mana value, colour, rarity), filter (colour identity, type, rarity, condition, foil, tags), your own tags like "Aang staples" or "To sell", long-press multi-select for bulk moves / condition / tags / delete, and a list or card-image grid view.
+- **Scan list:** scanned cards wait for review, so you can fix the printing, foil, condition and binder before adding them.
 - **Imports:** TXT and CSV from ManaBox, Moxfield, Deckbox, Archidekt and Arena, or pasted lists.
 - **Deck storage:** Built / Brewing / Retired decks. Missing cards become trade wants automatically; Built decks keep their cards out of trades ("the deck takes priority").
 - **Friends and trade suggestions:** add friends by username, see their Showcase, Up for trade binder and wants, and get two-way trade suggestions ranked by deck gaps. Propose, counter, accept, and mark trades as swapped; both collections update when both of you confirm.

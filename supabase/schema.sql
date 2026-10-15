@@ -27,6 +27,8 @@ create table if not exists public.collection_items (
   primary key (user_id, item_key)
 );
 create index if not exists collection_items_binder on public.collection_items (user_id, binder);
+-- Added later: your own tags, kept with the backup.
+alter table public.collection_items add column if not exists tags jsonb not null default '[]';
 
 create table if not exists public.decks (
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -162,12 +164,13 @@ language plpgsql set search_path = public as $$
 begin
   if auth.uid() is null then raise exception 'not signed in'; end if;
   delete from collection_items where user_id = auth.uid();
-  insert into collection_items (user_id, item_key, card, name_key, foil, qty, binder, condition, added)
+  insert into collection_items (user_id, item_key, card, name_key, foil, qty, binder, condition, added, tags)
   select auth.uid(), x.item_key, x.card, x.name_key, coalesce(x.foil, false), x.qty,
-         coalesce(x.binder, 'collection'), coalesce(x.condition, 'NM'), coalesce(x.added, now())
+         coalesce(x.binder, 'collection'), coalesce(x.condition, 'NM'), coalesce(x.added, now()),
+         coalesce(x.tags, '[]'::jsonb)
   from jsonb_to_recordset(items) as x(
     item_key text, card jsonb, name_key text, foil boolean, qty int,
-    binder text, condition text, added timestamptz)
+    binder text, condition text, added timestamptz, tags jsonb)
   where x.qty > 0;
 end $$;
 

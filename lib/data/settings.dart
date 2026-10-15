@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import 'collection_query.dart';
 import 'json_file.dart';
 
 /// How the scanner turns OCR text into a card name.
@@ -22,20 +23,44 @@ enum NameMatching {
 
 class AppSettings extends ChangeNotifier {
   NameMatching nameMatching = NameMatching.offlineList;
+
+  /// Collection screen: grid of card images instead of a list.
+  bool collectionGrid = false;
+  SortBy sortBy = SortBy.added;
+  bool sortDescending = true;
+
   final JsonFile _file = JsonFile('settings.json');
 
   Future<void> load() async {
     final data = await _file.open();
     if (data is Map) {
       nameMatching = NameMatching.parse(data['nameMatching'] as String?);
+      collectionGrid = data['collectionGrid'] as bool? ?? false;
+      sortBy = SortBy.values.firstWhere((s) => s.name == data['sortBy'], orElse: () => SortBy.added);
+      sortDescending = data['sortDescending'] as bool? ?? true;
     }
     notifyListeners();
   }
+
+  Future<void> _save() => _file.write({
+        'nameMatching': nameMatching.id,
+        'collectionGrid': collectionGrid,
+        'sortBy': sortBy.name,
+        'sortDescending': sortDescending,
+      });
 
   Future<void> setNameMatching(NameMatching m) async {
     if (m == nameMatching) return;
     nameMatching = m;
     notifyListeners();
-    await _file.write({'nameMatching': m.id});
+    await _save();
+  }
+
+  Future<void> setCollectionView({bool? grid, SortBy? sortBy, bool? descending}) async {
+    if (grid != null) collectionGrid = grid;
+    if (sortBy != null) this.sortBy = sortBy;
+    if (descending != null) sortDescending = descending;
+    notifyListeners();
+    await _save();
   }
 }

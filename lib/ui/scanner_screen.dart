@@ -4,17 +4,26 @@ import 'package:flutter/material.dart';
 import '../data/collection.dart';
 import '../data/models.dart';
 import '../data/prices.dart';
+import '../data/scan_buffer.dart';
 import '../data/scryfall.dart';
 import '../data/settings.dart';
 import '../scan_controller.dart';
 import 'guide_overlay.dart';
+import 'scan_review_screen.dart';
 import 'scan_settings_sheet.dart';
 
 class ScannerScreen extends StatefulWidget {
   final CollectionStore collection;
   final ScryfallClient scryfall;
   final AppSettings settings;
-  const ScannerScreen({super.key, required this.collection, required this.scryfall, required this.settings});
+  final ScanBuffer buffer;
+  const ScannerScreen({
+    super.key,
+    required this.collection,
+    required this.scryfall,
+    required this.settings,
+    required this.buffer,
+  });
 
   @override
   State<ScannerScreen> createState() => _ScannerScreenState();
@@ -77,15 +86,23 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
     if (s == null) return;
     if (s.autoAdd && s.hit != null && !identical(s.hit, _autoAddedHit)) {
       _autoAddedHit = s.hit;
-      final card = s.hit!.card;
-      widget.collection.add(card, foil: _foil, binder: _binder);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Added ${card.name} to ${_binder.label}'),
-        duration: const Duration(milliseconds: 1200),
-      ));
+      _keep(s.hit!);
       Future.delayed(const Duration(milliseconds: 600), () => _scan?.resume(suppressCurrent: true));
     }
     if (mounted) setState(() {});
+  }
+
+  /// Put a scanned card in the scan list (reviewed later) and say so.
+  Future<void> _keep(ScanHit hit) async {
+    final item = await widget.buffer.add(hit.card, foil: _foil, binder: _binder, exactPrinting: hit.exactPrinting);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text('Scanned ${hit.card.name}${item.quantity > 1 ? ' (×${item.quantity})' : ''}'),
+        duration: const Duration(milliseconds: 1500),
+        action: SnackBarAction(label: 'Undo', onPressed: () => widget.buffer.undo(item)),
+      ));
   }
 
   @override
@@ -168,6 +185,7 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
                 ),
                 if (s != null) _statusBar(s),
                 if (s?.hit != null && !_autoAdd) _resultPanel(s!) else _controls(s),
+                _bufferBar(),
               ],
             ),
     );
@@ -195,6 +213,48 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
           style: TextStyle(color: s.sidesFound >= 3 ? Colors.greenAccent : Colors.white38, fontSize: 12),
         ),
       ]),
+    );
+  }
+
+  /// "12 scanned · Review" — opens the scan list to check cards and choose
+  /// where they go before they're added to the collection.
+  Widget _bufferBar() {
+    return ListenableBuilder(
+      listenable: widget.buffer,
+      builder: (context, _) {
+        final b = widget.buffer;
+        return Material(
+          color: Theme.of(context).colorScheme.surfaceContainerHigh,
+          child: InkWell(
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => ScanReviewScreen(buffer: b, collection: widget.collection, scryfall: widget.scryfall),
+            )),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+              child: Row(children: [
+                const Icon(Icons.inbox, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    b.isEmpty
+                        ? 'Scan list empty. Scanned cards wait here for review.'
+                        : '${b.count} scanned${b.totalEur > 0 ? ' · ≈ ${gbp(b.totalEur)}' : ''}',
+                  ),
+                ),
+                FilledButton.tonal(
+                  onPressed: b.isEmpty
+                      ? null
+                      : () => Navigator.of(context).push(MaterialPageRoute(
+                            builder: (_) =>
+                                ScanReviewScreen(buffer: b, collection: widget.collection, scryfall: widget.scryfall),
+                          )),
+                  child: const Text('Review'),
+                ),
+              ]),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -266,9 +326,9 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
                 Wrap(spacing: 8, runSpacing: 4, children: [
                   FilledButton.icon(
                     icon: const Icon(Icons.add),
-                    label: Text(_binder == Binder.collection ? 'Add' : 'Add to ${_binder.label}'),
+                    label: const Text('Keep'),
                     onPressed: () {
-                      widget.collection.add(c, foil: _foil, binder: _binder);
+                      _keep(hit);
                       s.resume(suppressCurrent: true);
                     },
                   ),
