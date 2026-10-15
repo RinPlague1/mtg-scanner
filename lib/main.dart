@@ -30,6 +30,13 @@ class BinderApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
+      // Android 15+ draws apps edge-to-edge, under the system Home / Back
+      // buttons. Pad every screen (and bottom sheet) above them, and fill the
+      // strip behind the buttons with the app's colour.
+      builder: (context, child) => ColoredBox(
+        color: Theme.of(context).colorScheme.surfaceContainer,
+        child: SafeArea(top: false, left: false, right: false, child: child!),
+      ),
       home: HomeShell(services: services),
     );
   }
