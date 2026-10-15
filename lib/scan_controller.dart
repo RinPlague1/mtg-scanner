@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 import 'dart:ui' show Size;
@@ -6,10 +7,12 @@ import 'dart:ui' show Size;
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'data/name_index.dart';
 import 'data/scryfall.dart';
 import 'ocr/card_text_parser.dart';
+import 'vision/bmp.dart';
 import 'vision/frame.dart';
 import 'vision/geometry.dart';
 import 'vision/scan_pipeline.dart';
@@ -197,8 +200,8 @@ class ScanController extends ChangeNotifier {
     _glareFrames = a.nameGlare > 0.02 ? _glareFrames + 1 : 0;
     _darkFrames = a.cardBrightness < 35 ? _darkFrames + 1 : 0;
 
-    final nameLines = await _ocr(a.name);
-    final setLines = await _ocr(a.setLine);
+    final nameLines = await _ocr(a.name, 'name');
+    final setLines = await _ocr(a.setLine, 'set');
     final candidates = CardTextParser.nameCandidates(nameLines);
     final setInfo = CardTextParser.setInfo(setLines);
     lastRawName = candidates.isEmpty ? null : candidates.first;
@@ -252,7 +255,7 @@ class ScanController extends ChangeNotifier {
       status = read != null
           ? 'Reading: ${read.name}'
           : ocrProblem != null
-              ? 'Text reader not working: $ocrProblem'
+              ? 'Text reader not working. Full error: ⚙ → Show what the scanner reads'
               : (candidates.isNotEmpty && _index != null)
                   ? 'Read "${candidates.first}" but it doesn\'t match a card name'
                   : (a.sidesFound >= 3 ? 'Card found, reading the name…' : 'Line the card up with the frame');
@@ -260,17 +263,33 @@ class ScanController extends ChangeNotifier {
     }
   }
 
-  Future<List<String>> _ocr(OcrCrop crop) async {
-    final input = InputImage.fromBytes(
-      bytes: crop.nv21,
-      metadata: InputImageMetadata(
-        size: Size(crop.width.toDouble(), crop.height.toDouble()),
-        rotation: InputImageRotation.rotation0deg,
-        format: InputImageFormat.nv21,
-        bytesPerRow: crop.width,
-      ),
-    );
+  /// Some phones' ML Kit can't take raw NV21 bytes (InputImageConverterError).
+  /// After the first such failure, crops are written to small BMP files in the
+  /// cache folder and read from there instead.
+  bool _ocrViaFile = false;
+  bool get ocrViaFile => _ocrViaFile;
+  String? _cacheDir;
+
+  Future<List<String>> _ocr(OcrCrop crop, String tag) async {
     try {
+      final InputImage input;
+      if (_ocrViaFile) {
+        _cacheDir ??= (await getTemporaryDirectory()).path;
+        final path = '$_cacheDir/ocr_$tag.bmp';
+        final gray = Uint8List.sublistView(crop.nv21, 0, crop.width * crop.height);
+        await File(path).writeAsBytes(grayToBmp(gray, crop.width, crop.height), flush: true);
+        input = InputImage.fromFilePath(path);
+      } else {
+        input = InputImage.fromBytes(
+          bytes: crop.nv21,
+          metadata: InputImageMetadata(
+            size: Size(crop.width.toDouble(), crop.height.toDouble()),
+            rotation: InputImageRotation.rotation0deg,
+            format: InputImageFormat.nv21,
+            bytesPerRow: crop.width,
+          ),
+        );
+      }
       final r = await _recognizer.processImage(input);
       ocrProblem = null;
       return [
@@ -280,12 +299,18 @@ class ScanController extends ChangeNotifier {
     } catch (e) {
       debugPrint('OCR failed: $e');
       final msg = e.toString();
+      if (!_ocrViaFile && msg.contains('InputImageConverterError')) {
+        // Switch to file input and retry this crop straight away.
+        _ocrViaFile = true;
+        return _ocr(crop, tag);
+      }
       ocrProblem = msg.toLowerCase().contains('download')
           ? 'the text model is still downloading. Stay online for a minute and try again.'
-          : (msg.length > 120 ? '${msg.substring(0, 120)}…' : msg);
+          : msg;
       return const [];
     }
   }
+
 
   /// Raw OCR text varies a little between frames ("Sol Ring" / "Sol Rinq"
   /// stays distinct, but case, spacing and stray punctuation shouldn't).
