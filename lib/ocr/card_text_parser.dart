@@ -33,6 +33,7 @@ class CardTextParser {
   /// Parses the collector line, e.g.
   ///   "0107 M" / "DMU • EN"          (2022+ frames)
   ///   "107/281 R" / "M20 • EN"       (M15 – 2021 frames)
+  ///   "R 0194" / "DFT • EN"          (2023+ frames, rarity first)
   static SetInfo? setInfo(List<String> lines) {
     String? number;
     String? setCode;
@@ -41,9 +42,12 @@ class CardTextParser {
     final numRe = RegExp(r'\b(\d{1,4}[a-z]?)(?:\s*/\s*\d{1,4})?\s+[CURMSLTPcurmsltp]\b');
     // Set code: 3-5 alphanumerics then a bullet-ish separator then language.
     final setRe = RegExp(r'\b([A-Z0-9]{3,5})\s*[•·*.,:-]?\s*(EN|DE|FR|IT|ES|PT|JA|JP|KO|RU|ZHS|ZHT|CS|CT|PH)\b');
+    // 2023+ frames put the rarity first: "R 0194", sometimes read as "R0194".
+    final rarityFirstRe = RegExp(r'(?:^|\s)[CURMSLTP]\s*(\d{3,4})(?:\s*/\s*\d{1,4})?\b');
     for (final raw in lines) {
       final line = raw.replaceAll('O', '0').replaceAll(RegExp(r'[Il|]'), '1');
       number ??= numRe.firstMatch(line)?.group(1);
+      number ??= rarityFirstRe.firstMatch(line)?.group(1);
       final m = setRe.firstMatch(raw.toUpperCase());
       if (m != null && setCode == null) {
         final code = m.group(1)!;

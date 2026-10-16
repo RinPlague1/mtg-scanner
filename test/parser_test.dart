@@ -16,6 +16,11 @@ void main() {
       final s = CardTextParser.setInfo(['O2I5 U', 'MKM EN']);
       expect(s, const SetInfo('mkm', '215'));
     });
+    test('2023+ frame with the rarity first', () {
+      expect(CardTextParser.setInfo(['R 0194', 'DFT EN MiRo fALONI']), const SetInfo('dft', '194'));
+      expect(CardTextParser.setInfo(['R0194', 'DFT ·EN MiRNO FAILONI']), const SetInfo('dft', '194'));
+      expect(CardTextParser.setInfo(['M 0012/0281', 'MKM • EN']), const SetInfo('mkm', '12'));
+    });
     test('garbage gives null', () {
       expect(CardTextParser.setInfo(['~~', 'zz']), isNull);
     });
