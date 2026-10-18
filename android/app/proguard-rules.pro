@@ -31,5 +31,13 @@
 -keepclassmembers class * {
     @kotlin.jvm.JvmStatic *;
 }
--keep class kotlin.coroutines.Continuation { *; }
+# The plugins' Kotlin code (coroutines, DataStore behind shared_preferences)
+# is looked up at run time too: "ClassNotFoundException:
+# kotlin/coroutines/intrinsics/CoroutineSingletons". Keep Kotlin's runtime,
+# coroutines and AndroidX DataStore whole.
+-keep class kotlin.** { *; }
+-keep class kotlinx.** { *; }
+-keep class androidx.datastore.** { *; }
+-keepattributes Signature, InnerClasses, EnclosingMethod, *Annotation*
+-dontwarn kotlinx.**
 -dontwarn io.flutter.embedding.**
