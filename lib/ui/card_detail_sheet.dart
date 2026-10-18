@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../data/card_db.dart' show imageAtSize;
 import '../data/decks.dart';
 import '../data/models.dart';
 import '../data/prices.dart';
@@ -119,7 +120,7 @@ class _CardDetailState extends State<_CardDetail> {
               Center(
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: Image.network(c.imageUrl!, height: 340, fit: BoxFit.contain),
+                  child: Image.network(imageAtSize(c.imageUrl!, 'large'), height: 340, fit: BoxFit.contain),
                 ),
               ),
             const SizedBox(height: 12),

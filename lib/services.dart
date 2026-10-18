@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'data/card_db.dart';
 import 'data/collection.dart';
 import 'data/decks.dart';
 import 'data/scan_buffer.dart';
@@ -19,6 +22,7 @@ class AppServices {
   final Backend backend;
   final SocialStore social;
   final SyncService sync;
+  final CardDbStore cardDb;
 
   AppServices._(
     this.collection,
@@ -30,6 +34,7 @@ class AppServices {
     this.backend,
     this.social,
     this.sync,
+    this.cardDb,
   );
 
   static Future<AppServices> create() async {
@@ -37,6 +42,9 @@ class AppServices {
     final decks = DeckStore();
     final wishlist = WishlistStore();
     final scryfall = ScryfallClient();
+    final cardDb = CardDbStore();
+    scryfall.local = cardDb;
+    unawaited(cardDb.load()); // in the background; lookups go online until it's ready
     final settings = AppSettings();
     final buffer = ScanBuffer();
     await Future.wait([collection.load(), decks.load(), wishlist.load(), settings.load(), buffer.load()]);
@@ -60,6 +68,6 @@ class AppServices {
     );
     backend.start();
     sync.start();
-    return AppServices._(collection, decks, wishlist, scryfall, settings, buffer, backend, social, sync);
+    return AppServices._(collection, decks, wishlist, scryfall, settings, buffer, backend, social, sync, cardDb);
   }
 }

@@ -86,6 +86,9 @@ class ScanController extends ChangeNotifier {
   SetInfo? lastSetInfo;
   String? lastMatch;
 
+  /// What the current Scryfall lookup is doing, for the troubleshooting panel.
+  String lookupStep = '';
+
   /// Last text-recognition error (e.g. the model is still downloading), shown
   /// in the status line instead of failing silently.
   String? ocrProblem;
@@ -93,6 +96,10 @@ class ScanController extends ChangeNotifier {
 
   bool _busy = false;
   bool _paused = false;
+
+  /// Bumped whenever a lookup is abandoned (Skip, cancel, timeout), so a
+  /// late answer from Scryfall can't land on the next card.
+  int _lookupGen = 0;
   DateTime _lastFrame = DateTime.fromMillisecondsSinceEpoch(0);
   final List<_Read?> _reads = [];
   int _glareFrames = 0;
@@ -162,8 +169,10 @@ class ScanController extends ChangeNotifier {
     _suppressCode =
         suppressCurrent && current != null ? _codeKey(current.setCode, current.collectorNumber) : null;
     hit = null;
+    _lookupGen++;
     _reads.clear();
     _paused = false;
+    hint = ScanHint.none;
     status = 'Line the card up with the frame';
     notifyListeners();
   }
@@ -285,7 +294,14 @@ class ScanController extends ChangeNotifier {
       status = 'Found ${winner.label} — looking up…';
       hint = ScanHint.lookingUp;
       notifyListeners();
-      await _resolve(winner);
+      final gen = ++_lookupGen;
+      // Never leave the scanner stuck on "looking up": give up after 15 s.
+      await _resolve(winner, gen).timeout(const Duration(seconds: 15), onTimeout: () {
+        if (gen == _lookupGen && hit == null) {
+          _lookupGen++;
+          _lookupFailed('Scryfall took too long (step: $lookupStep). Tap to try again');
+        }
+      });
     } else {
       status = read != null
           ? 'Reading: ${read.label}'
@@ -476,7 +492,9 @@ class ScanController extends ChangeNotifier {
   }
 
 
-  void _lookupFailed(String message) {
+  void _lookupFailed(String message, [int? gen]) {
+    if (gen != null && gen != _lookupGen) return; // abandoned lookup
+    lookupStep = 'failed';
     status = message;
     _paused = false;
     _reads.clear();
@@ -484,7 +502,10 @@ class ScanController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _found(CardPrint card, bool exact) {
+  void _found(CardPrint card, bool exact, [int? gen]) {
+    if (gen != null && gen != _lookupGen) return; // abandoned lookup
+    lookupStep = 'found ${card.setCode} #${card.collectorNumber}';
+    _paused = true;
     hit = ScanHit(card, exact);
     status = card.name;
     hint = ScanHint.none;
@@ -493,41 +514,44 @@ class ScanController extends ChangeNotifier {
 
   /// Looks the winning read up on Scryfall: set code + collector number
   /// first, with the title as a cross-check; the title alone otherwise.
-  Future<void> _resolve(_Read r) async {
+  Future<void> _resolve(_Read r, int gen) async {
     try {
       final s = r.set;
       final hasTitle = !r.codeOnly;
 
       if (s != null && s.complete) {
+        lookupStep = 'by code ${s.setCode} #${s.collectorNumber}';
         final byCode = await scryfall.bySetAndNumber(s.setCode!, s.collectorNumber!);
         // Code found and the title agrees (or no title was readable): done.
         if (byCode != null && (!hasTitle || _namesAgree(byCode, r.name))) {
-          _found(byCode, true);
+          _found(byCode, true, gen);
           return;
         }
         if (hasTitle) {
           // They disagree, so one was misread. If the title names a card in
           // this set, the collector number was the misread part.
+          lookupStep = 'title "${r.name}" in ${s.setCode}';
           final inSet = _index != null
               ? await scryfall.named(r.name, set: s.setCode)
               : await scryfall.named(r.name, set: s.setCode, fuzzy: true);
           if (inSet != null) {
-            _found(inSet, inSet.collectorNumber == s.collectorNumber);
+            _found(inSet, inSet.collectorNumber == s.collectorNumber, gen);
             return;
           }
         }
         // Otherwise trust the code.
         if (byCode != null) {
-          _found(byCode, true);
+          _found(byCode, true, gen);
           return;
         }
         if (!hasTitle) {
-          _lookupFailed('No card ${r.label} on Scryfall. Try again with the title visible');
+          _lookupFailed('No card ${r.label} on Scryfall. Try again with the title visible', gen);
           return;
         }
       }
 
       // No usable code: the title decides; any set code seen narrows the printing.
+      lookupStep = 'title "${r.name}"';
       CardPrint? card;
       if (_index != null) {
         card = await scryfall.named(r.name, set: s?.setCode);
@@ -537,11 +561,14 @@ class ScanController extends ChangeNotifier {
       }
       card ??= await scryfall.named(r.name, fuzzy: true);
       if (card == null) {
-        _lookupFailed('Couldn\'t find "${r.name}". Try again');
+        _lookupFailed('Couldn\'t find "${r.name}". Try again', gen);
         return;
       }
-      _found(card, false);
+      _found(card, false, gen);
     } catch (e) {
+      if (gen != _lookupGen) return;
+      debugPrint('lookup failed at $lookupStep: $e');
+      lookupStep = 'error at $lookupStep: $e';
       status = 'Lookup failed (offline?). Tap to retry';
       hint = ScanHint.offline;
       _paused = false;

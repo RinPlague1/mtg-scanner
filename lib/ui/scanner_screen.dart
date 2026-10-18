@@ -222,7 +222,7 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
         Text(
           'Parsed set: ${s.lastSetInfo ?? '-'}  ·  match: ${s.lastMatch ?? '-'}  ·  '
           '${s.useNameList ? 'name list' : 'Scryfall online'}  ·  OCR input: ${s.ocrInputMode}  ·  '
-          'frames ${s.framesAnalysed} (${s.lastFrameMs} ms)',
+          'frames ${s.framesAnalysed} (${s.lastFrameMs} ms)  ·  lookup: ${s.lookupStep.isEmpty ? '-' : s.lookupStep}',
           style: style,
         ),
         if (s.ocrErrors.isNotEmpty)
@@ -256,6 +256,8 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
         Icon(icon, color: color, size: 18),
         const SizedBox(width: 8),
         Expanded(child: Text(text, style: TextStyle(color: color), maxLines: 2)),
+        if (s.hint == ScanHint.lookingUp && s.hit == null)
+          TextButton(onPressed: () => s.resume(), child: const Text('Cancel')),
         Text(
           s.sidesFound >= 3 ? 'edges ✓' : 'edges ${s.sidesFound}/4',
           style: TextStyle(color: s.sidesFound >= 3 ? Colors.greenAccent : Colors.white38, fontSize: 12),
@@ -374,15 +376,15 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
                       s.resume(suppressCurrent: true);
                     },
                   ),
-                  SegmentedButton<bool>(
-                    showSelectedIcon: false,
-                    style: const ButtonStyle(visualDensity: VisualDensity.compact),
-                    segments: [
-                      ButtonSegment(value: false, label: const Text('Non-foil'), enabled: canBeNonFoil(c)),
-                      ButtonSegment(value: true, label: const Text('Foil'), enabled: canBeFoil(c)),
-                    ],
-                    selected: {_foil},
-                    onSelectionChanged: (v) => setState(() => _foil = v.first),
+                  ChoiceChip(
+                    label: const Text('Non-foil'),
+                    selected: !_foil,
+                    onSelected: canBeNonFoil(c) ? (_) => setState(() => _foil = false) : null,
+                  ),
+                  ChoiceChip(
+                    label: const Text('Foil'),
+                    selected: _foil,
+                    onSelected: canBeFoil(c) ? (_) => setState(() => _foil = true) : null,
                   ),
                   OutlinedButton(
                     onPressed: () => _pickPrinting(s, c),

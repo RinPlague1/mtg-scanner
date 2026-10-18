@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
+import 'card_db.dart';
+
 /// One printing of a card.
 class CardPrint {
   final String id;
@@ -133,6 +135,11 @@ class ScryfallClient {
 
   ScryfallClient([http.Client? client]) : _http = client ?? http.Client();
 
+  /// Offline card data, when downloaded. Lookups try it first and only go
+  /// online for cards it doesn't have (e.g. newer than the download).
+  CardDbStore? local;
+  CardDb? get _db => local?.db;
+
   Future<Map<String, dynamic>?> _get(String path, [Map<String, String>? query]) async {
     final wait = const Duration(milliseconds: 110) - DateTime.now().difference(_last);
     if (!wait.isNegative) await Future<void>.delayed(wait);
@@ -164,6 +171,22 @@ class ScryfallClient {
   /// Identifiers: {'id': …} | {'set': …, 'collector_number': …} | {'name': …, 'set'?: …}.
   Future<List<CardPrint>> collection(List<Map<String, String>> identifiers) async {
     final out = <CardPrint>[];
+    final db = _db;
+    if (db != null) {
+      final online = <Map<String, String>>[];
+      for (final id in identifiers) {
+        final name = id['name'], set = id['set'], number = id['collector_number'];
+        final c = name != null
+            ? db.named(name, set: set)
+            : (set != null && number != null ? db.byCode(set, number) : null);
+        if (c != null) {
+          out.add(c);
+        } else {
+          online.add(id);
+        }
+      }
+      identifiers = online;
+    }
     for (var i = 0; i < identifiers.length; i += 75) {
       final chunk = identifiers.sublist(i, i + 75 > identifiers.length ? identifiers.length : i + 75);
       final j = await _post('/cards/collection', {'identifiers': chunk});
@@ -203,11 +226,16 @@ class ScryfallClient {
   }
 
   Future<CardPrint?> bySetAndNumber(String set, String number) async {
+    final local = _db?.byCode(set, number);
+    if (local != null) return local;
     final j = await _get('/cards/${Uri.encodeComponent(set)}/${Uri.encodeComponent(number)}');
     return j == null ? null : CardPrint.fromScryfall(j);
   }
 
   Future<CardPrint?> named(String name, {String? set, bool fuzzy = false}) async {
+    // Exact names (and fuzzy ones that happen to be exact) from the download.
+    final local = _db?.named(name, set: set);
+    if (local != null) return local;
     final q = <String, String>{fuzzy ? 'fuzzy' : 'exact': name, if (set != null) 'set': set};
     final j = await _get('/cards/named', q);
     return j == null ? null : CardPrint.fromScryfall(j);
@@ -215,6 +243,8 @@ class ScryfallClient {
 
   /// All printings of a card, newest first.
   Future<List<CardPrint>> printings(String exactName) async {
+    final local = _db?.printings(exactName) ?? const [];
+    if (local.isNotEmpty) return local;
     final j = await _get('/cards/search', {
       'q': '!"$exactName" include:extras',
       'unique': 'prints',
@@ -246,6 +276,8 @@ class ScryfallClient {
 
   /// Every English card name, cached on disk and refreshed weekly.
   Future<List<String>> cardNames() async {
+    final db = _db;
+    if (db != null) return db.names;
     final file = await _cardNamesFile();
     if (await file.exists()) {
       final age = DateTime.now().difference(await file.lastModified());

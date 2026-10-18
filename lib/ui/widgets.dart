@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../data/card_db.dart' show imageAtSize;
 import '../data/prices.dart';
 import '../data/trade_logic.dart';
 import '../social/backend.dart';
@@ -11,8 +12,10 @@ class CardThumb extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final u = url;
-    if (u == null) return SizedBox(width: width, child: const Icon(Icons.style));
+    final raw = url;
+    if (raw == null) return SizedBox(width: width, child: const Icon(Icons.style));
+    // Small list thumbnails load Scryfall's small image (much less data).
+    final u = width <= 60 ? imageAtSize(raw, 'small') : raw;
     return ClipRRect(
       borderRadius: BorderRadius.circular(width / 12),
       child: Image.network(
