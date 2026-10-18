@@ -20,3 +20,16 @@
 -keep class com.google_mlkit_commons.** { *; }
 -keep class com.google.firebase.components.** { *; }
 -keep class * implements com.google.firebase.components.ComponentRegistrar { *; }
+
+# Supabase keeps your sign-in in shared_preferences. R8 rewrote that
+# plugin's Kotlin code in release builds, so Supabase failed to start with
+# "NoSuchMethodError: ... SharedPreferencesApiRegistrar.getAll". Keep the
+# Flutter plugins' Android code exactly as built.
+-keep class io.flutter.plugins.** { *; }
+-keep class io.flutter.plugin.** { *; }
+-keep class dev.flutter.pigeon.** { *; }
+-keepclassmembers class * {
+    @kotlin.jvm.JvmStatic *;
+}
+-keep class kotlin.coroutines.Continuation { *; }
+-dontwarn io.flutter.embedding.**
