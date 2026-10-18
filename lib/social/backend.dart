@@ -154,12 +154,24 @@ class Backend extends ChangeNotifier {
   Profile? profile;
   StreamSubscription<AuthState>? _sub;
 
+  static bool _ready = false;
+
+  /// Why connecting to Supabase failed at startup (bad URL or key, …).
+  /// The app then runs offline and the Friends tab shows this.
+  static String? initError;
+
   static Future<void> initialize() async {
     if (!AppConfig.onlineEnabled) return;
-    await Supabase.initialize(url: AppConfig.supabaseUrl, anonKey: AppConfig.supabaseAnonKey);
+    try {
+      await Supabase.initialize(url: AppConfig.supabaseUrl, anonKey: AppConfig.supabaseAnonKey)
+          .timeout(const Duration(seconds: 10));
+      _ready = true;
+    } catch (e) {
+      initError = 'Could not connect to Supabase (${AppConfig.supabaseUrl}): $e';
+    }
   }
 
-  bool get enabled => AppConfig.onlineEnabled;
+  bool get enabled => AppConfig.onlineEnabled && _ready;
   SupabaseClient get _db => Supabase.instance.client;
   User? get user => enabled ? _db.auth.currentUser : null;
   bool get signedIn => user != null;

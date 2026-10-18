@@ -52,6 +52,14 @@ class _SignInPanelState extends State<SignInPanel> {
 
   @override
   Widget build(BuildContext context) {
+    if (Backend.initError != null) {
+      return EmptyState(
+        icon: Icons.cloud_off,
+        title: 'Couldn\'t connect to your Supabase project',
+        body: '${Backend.initError}\n\nCheck the SUPABASE_URL and SUPABASE_ANON_KEY secrets on GitHub, then rebuild. '
+            'Everything else works offline meanwhile.',
+      );
+    }
     if (!AppConfig.onlineEnabled) {
       return const EmptyState(
         icon: Icons.cloud_off,

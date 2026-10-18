@@ -9,9 +9,42 @@ import 'ui/home_shell.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-  await Fx.instance.load();
-  final services = await AppServices.create();
-  runApp(BinderApp(services: services));
+  try {
+    await Fx.instance.load();
+    final services = await AppServices.create();
+    runApp(BinderApp(services: services));
+  } catch (e, st) {
+    // Never sit on the launch screen: show what went wrong instead.
+    debugPrint('startup failed: $e\n$st');
+    runApp(_StartupError('$e'));
+  }
+}
+
+class _StartupError extends StatelessWidget {
+  final String message;
+  const _StartupError(this.message);
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(brightness: Brightness.dark, useMaterial3: true),
+      home: Scaffold(
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: ListView(children: [
+              const Icon(Icons.error_outline, size: 48),
+              const SizedBox(height: 12),
+              const Text('The app couldn\'t start', style: TextStyle(fontSize: 20)),
+              const SizedBox(height: 12),
+              SelectableText(message),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class BinderApp extends StatelessWidget {
