@@ -57,7 +57,7 @@ void main() {
     expect(s.unknown, 1);
     expect(s.curve.sublist(0, 5), [1, 1, 2, 1, 1]);
     expect(s.pips, {'W': 3, 'U': 3, 'B': 0, 'R': 2, 'G': 2});
-    expect(s.valueEur, closeTo(9.0, 0.001)); // 8 cards at 1.00 + 10 Islands at 0.10
+    expect(s.valueEur, closeTo(8.0, 0.001)); // 7 priced cards at 1.00 + 10 Islands at 0.10
     expect(s.averageMv, closeTo((4 + 1 + 2 + 0 + 2 + 3) / 6, 0.001));
   });
 
