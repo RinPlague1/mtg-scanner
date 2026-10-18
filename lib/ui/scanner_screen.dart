@@ -9,6 +9,7 @@ import '../data/scryfall.dart';
 import '../data/settings.dart';
 import '../scan_controller.dart';
 import 'guide_overlay.dart';
+import 'printing_picker.dart';
 import 'scan_review_screen.dart';
 import 'scan_settings_sheet.dart';
 
@@ -36,6 +37,10 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
   bool _autoAdd = false;
   Binder _binder = Binder.collection;
   ScanHit? _autoAddedHit;
+
+  /// The hit [_foil] belongs to. Foil is chosen per card after it is
+  /// scanned and goes back to the default for every new card.
+  ScanHit? _foilHit;
 
   @override
   void initState() {
@@ -85,6 +90,14 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
   void _onScanChanged() {
     final s = _scan;
     if (s == null) return;
+    final hit = s.hit;
+    if (hit != null && !identical(hit, _foilHit)) {
+      // Picking another printing of the same card keeps the finish if it exists.
+      final sameCard = _foilHit != null && _foilHit!.card.name == hit.card.name;
+      final keep = sameCard && (_foil ? canBeFoil(hit.card) : canBeNonFoil(hit.card));
+      _foilHit = hit;
+      if (!keep) _foil = defaultFoil(hit.card);
+    }
     if (s.autoAdd && s.hit != null && !identical(s.hit, _autoAddedHit)) {
       _autoAddedHit = s.hit;
       _keep(s.hit!);
@@ -95,12 +108,14 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
 
   /// Put a scanned card in the scan list (reviewed later) and say so.
   Future<void> _keep(ScanHit hit) async {
-    final item = await widget.buffer.add(hit.card, foil: _foil, binder: _binder, exactPrinting: hit.exactPrinting);
+    final foil = identical(hit, _foilHit) ? _foil : defaultFoil(hit.card);
+    setState(() => _foil = false);
+    final item = await widget.buffer.add(hit.card, foil: foil, binder: _binder, exactPrinting: hit.exactPrinting);
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(
-        content: Text('Scanned ${hit.card.name}${item.quantity > 1 ? ' (×${item.quantity})' : ''}'),
+        content: Text('Scanned ${hit.card.name}${foil ? ' (foil)' : ''}${item.quantity > 1 ? ' (×${item.quantity})' : ''}'),
         duration: const Duration(milliseconds: 1500),
         action: SnackBarAction(label: 'Undo', onPressed: () => widget.buffer.undo(item)),
       ));
@@ -298,12 +313,6 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
         child: Row(children: [
           FilterChip(
-            label: const Text('Foil'),
-            selected: _foil,
-            onSelected: (v) => setState(() => _foil = v),
-          ),
-          const SizedBox(width: 8),
-          FilterChip(
             label: const Text('Auto-add'),
             selected: _autoAdd,
             onSelected: (v) {
@@ -365,16 +374,27 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
                       s.resume(suppressCurrent: true);
                     },
                   ),
-                  FilterChip(
-                    label: const Text('Foil'),
-                    selected: _foil,
-                    onSelected: (v) => setState(() => _foil = v),
+                  SegmentedButton<bool>(
+                    showSelectedIcon: false,
+                    style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                    segments: [
+                      ButtonSegment(value: false, label: const Text('Non-foil'), enabled: canBeNonFoil(c)),
+                      ButtonSegment(value: true, label: const Text('Foil'), enabled: canBeFoil(c)),
+                    ],
+                    selected: {_foil},
+                    onSelectionChanged: (v) => setState(() => _foil = v.first),
                   ),
                   OutlinedButton(
                     onPressed: () => _pickPrinting(s, c),
                     child: const Text('Printing'),
                   ),
-                  TextButton(onPressed: () => s.resume(), child: const Text('Skip')),
+                  TextButton(
+                    onPressed: () {
+                      setState(() => _foil = false);
+                      s.resume();
+                    },
+                    child: const Text('Skip'),
+                  ),
                 ]),
               ]),
             ),
@@ -385,39 +405,7 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
   }
 
   Future<void> _pickPrinting(ScanController s, CardPrint current) async {
-    final picked = await showModalBottomSheet<CardPrint>(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.6,
-        builder: (ctx, scroll) => FutureBuilder<List<CardPrint>>(
-          future: widget.scryfall.printings(current.name),
-          builder: (ctx, snap) {
-            if (snap.hasError) return Center(child: Text('Could not load printings: ${snap.error}'));
-            if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-            final list = snap.data!;
-            return ListView.builder(
-              controller: scroll,
-              itemCount: list.length,
-              itemBuilder: (ctx, i) {
-                final p = list[i];
-                return ListTile(
-                  selected: p.id == current.id,
-                  leading: p.imageUrl == null ? null : Image.network(p.imageUrl!, width: 36),
-                  title: Text('${p.setName} (${p.setCode.toUpperCase()})'),
-                  subtitle: Text('#${p.collectorNumber} · ${p.rarity}'),
-                  trailing: Text(p.priceEur != null
-                      ? gbp(double.tryParse(p.priceEur!))
-                      : (p.priceUsd != null ? '\$${p.priceUsd}' : '')),
-                  onTap: () => Navigator.of(ctx).pop(p),
-                );
-              },
-            );
-          },
-        ),
-      ),
-    );
+    final picked = await pickPrinting(context, widget.scryfall, current);
     if (picked != null) s.choosePrinting(picked);
   }
 }

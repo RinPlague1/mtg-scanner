@@ -29,7 +29,9 @@ def side_profile(E, horizontal, pos_lo, pos_hi, span_lo, span_hi, slopes=SLOPES)
             lim=(H if horizontal else W)
             ok=(q>=0)&(q<lim)
             v=E[q[ok],span[ok]] if horizontal else E[span[ok],q[ok]]
-            s=v.mean() if len(v) else 0
+            # 35th percentile along the line (Dart: _lowPercentile): a real card
+            # edge runs the whole side; mat patterns only have short streaks.
+            s=np.sort(v)[int(round((len(v)-1)*0.35))] if len(v) else 0
             if s>best[i]: best[i]=s; bt[i]=t
     return pos,best,bt
 def pick_outermost(pos,score,outer_first,min_contrast=0.07):
@@ -95,3 +97,67 @@ def quad_from_lines(lines, guide, W, H):
         x=(p2 + t2*(p1 - t1*m1 - m2))/(1 - t2*t1)
         y=p1+t1*(x-m1); return (x,y)
     return [inter(L['top'],L['left']),inter(L['top'],L['right']),inter(L['bottom'],L['right']),inter(L['bottom'],L['left'])]
+
+
+# --- Card-shape selection (mirrors EdgeRefiner steps 2-3) -------------------
+import itertools
+K = 63/88
+def significant_peaks(score, outer_first, min_contrast=0.07, maxn=4):
+    n=len(score); out=[]
+    for k in range(n):
+        i=k if outer_first else n-1-k
+        if i==0 or i==n-1: continue
+        if not (score[i]>=score[i-1] and score[i]>=score[i+1]): continue
+        win=score[max(0,i-11):max(0,i-2)] if outer_first else score[i+3:i+12]
+        if len(win)<4: win=score[i+3:i+10] if outer_first else score[max(0,i-9):max(0,i-2)]
+        if len(win)==0: continue
+        base=np.median(win); spread=1.4826*np.median(np.abs(win-base))+1e-6
+        if score[i]>=base+max(6*spread,min_contrast):
+            out.append((i,(score[i]-base)/spread))
+            if len(out)>=maxn: break
+    return out
+
+def refine_quad(rgb, guide, band=0.12):
+    """Returns (quad TL,TR,BR,BL, sides_found) like EdgeRefiner.refine."""
+    H,W,_=rgb.shape; ex,ey=edge_maps(rgb)
+    gx0,gy0,gx1,gy1=guide[0]*W,guide[1]*H,guide[2]*W,guide[3]*H; gw,gh=gx1-gx0,gy1-gy0
+    sides={}
+    for side in ['top','bottom','left','right']:
+        hor=side in('top','bottom'); g={'top':gy0,'bottom':gy1,'left':gx0,'right':gx1}[side]
+        d=band*(gh if hor else gw)
+        sl,sh=(gx0+0.15*gw,gx1-0.15*gw) if hor else (gy0+0.15*gh,gy1-0.15*gh)
+        sides[side]=(hor,g-d,g+d,sl,sh,g)
+    best_a,best_s=0,-1
+    for a in np.arange(-6,6.01,0.5):
+        t=np.tan(np.deg2rad(a)); tot=0
+        for side,(hor,lo,hi,sl,sh,g) in sides.items():
+            _,sc,_=side_profile(ey if hor else ex,hor,lo,hi,sl,sh,[t if hor else -t]); tot+=sc.max()-np.percentile(sc,15)
+        if tot>best_s: best_s,best_a=tot,a
+    cands={}
+    for side,(hor,lo,hi,sl,sh,g) in sides.items():
+        sgn=1 if hor else -1
+        slopes=[np.tan(np.deg2rad(sgn*best_a+d)) for d in (-1,-0.5,0,0.5,1)]
+        pos,sc,bt=side_profile(ey if hor else ex,hor,lo,hi,sl,sh,slopes)
+        mid=(sl+sh)/2
+        cands[side]=[(pos[i],bt[i],mid,sig) for i,sig in significant_peaks(sc,side in('top','left'))]
+        cands[side].append((g,np.tan(np.deg2rad(sgn*best_a)),mid,None))
+    def inter(h,v):
+        p1,t1,m1=h[:3]; p2,t2,m2=v[:3]
+        x=(p2 + t2*(p1 - t1*m1 - m2))/(1 - t2*t1); return (x,p1+t1*(x-m1))
+    def quad(T,B,L,R): return [inter(T,L),inter(T,R),inter(B,R),inter(B,L)]
+    def dims(q):
+        d=lambda a,b: np.hypot(a[0]-b[0],a[1]-b[1])
+        return (d(q[0],q[1])+d(q[3],q[2]))/2,(d(q[0],q[3])+d(q[1],q[2]))/2
+    order=['top','bottom','left','right']; best=None
+    for idx in itertools.product(*[range(len(cands[s])) for s in order]):
+        c=[cands[s][i] for s,i in zip(order,idx)]
+        q=quad(*c); w,h=dims(q)
+        if h<=0: continue
+        err=abs(w/h-K)/K
+        if err>0.05 or not(0.6*gw<w<1.3*gw and 0.6*gh<h<1.3*gh): continue
+        found=sum(1 for x in c if x[3] is not None)
+        key=(-found,sum(idx),err)
+        if best is None or key<best[0]: best=(key,q,found)
+    if best: return best[1], best[2]
+    first=[cands[s][0] for s in order]
+    return quad(*first), sum(1 for x in first if x[3] is not None)

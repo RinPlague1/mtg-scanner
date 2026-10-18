@@ -185,6 +185,29 @@ class CollectionStore extends ChangeNotifier {
     return true;
   }
 
+  /// Switch every copy of [e] to another printing and/or finish. Merges into
+  /// an existing entry with the same printing, finish, binder and condition.
+  /// Returns the entry that now holds the copies.
+  Future<CollectionEntry> changePrinting(CollectionEntry e, CardPrint card, {bool? foil}) async {
+    final f = foil ?? e.foil;
+    if (card.id == e.card.id && f == e.foil) return e;
+    final index = _entries.indexOf(e);
+    _entries.remove(e);
+    final key = CollectionEntry.keyFor(card, f, e.binder, e.condition);
+    var result = _entries.where((x) => x.key == key).firstOrNull;
+    if (result != null) {
+      result.quantity += e.quantity;
+      result.tags.addAll(e.tags);
+    } else {
+      result = CollectionEntry(card,
+          foil: f, quantity: e.quantity, binder: e.binder, condition: e.condition, added: e.added, tags: {...e.tags});
+      _entries.insert(index.clamp(0, _entries.length), result);
+    }
+    notifyListeners();
+    await _save();
+    return result;
+  }
+
   // ───────── Bulk edits (multi-select) ─────────
 
   /// Move every copy of each entry to [binder] and/or [condition].

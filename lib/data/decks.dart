@@ -2,20 +2,43 @@ import 'package:flutter/foundation.dart';
 
 import 'json_file.dart';
 import 'models.dart';
+import 'scryfall.dart';
 
 class DeckCard {
   final String name;
   final int qty;
   final bool commander;
 
-  const DeckCard(this.name, this.qty, {this.commander = false});
+  /// Card details (type, mana cost, image, price) for showing the deck.
+  /// Any printing satisfies the slot; this is just the one shown. Null until
+  /// fetched for imported lists.
+  final CardPrint? card;
+
+  const DeckCard(this.name, this.qty, {this.commander = false, this.card});
 
   String get key => nameKey(name);
 
-  Map<String, dynamic> toJson() => {'name': name, 'qty': qty, if (commander) 'commander': true};
+  DeckCard copyWith({int? qty, bool? commander, CardPrint? card}) =>
+      DeckCard(name, qty ?? this.qty, commander: commander ?? this.commander, card: card ?? this.card);
 
-  factory DeckCard.fromJson(Map<String, dynamic> j) =>
-      DeckCard(j['name'] as String, j['qty'] as int? ?? 1, commander: j['commander'] as bool? ?? false);
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'qty': qty,
+        if (commander) 'commander': true,
+        if (card != null) 'card': card!.toJson(),
+      };
+
+  factory DeckCard.fromJson(Map<String, dynamic> j) {
+    CardPrint? card;
+    final c = j['card'];
+    if (c is Map<String, dynamic>) {
+      try {
+        card = CardPrint.fromScryfall(c);
+      } catch (_) {}
+    }
+    return DeckCard(j['name'] as String, j['qty'] as int? ?? 1,
+        commander: j['commander'] as bool? ?? false, card: card);
+  }
 }
 
 class Deck {
@@ -39,6 +62,46 @@ class Deck {
 
   List<DeckCard> get commanders => cards.where((c) => c.commander).toList();
   int get cardCount => cards.fold(0, (s, c) => s + c.qty);
+
+  DeckCard? byKey(String key) => cards.where((c) => c.key == key).firstOrNull;
+
+  /// Add [qty] copies of a card (merging with the same name). Returns the new count.
+  int addCard(CardPrint card, {int qty = 1}) {
+    final key = nameKey(card.name);
+    final i = cards.indexWhere((c) => c.key == key);
+    if (i >= 0) {
+      final c = cards[i];
+      cards[i] = c.copyWith(qty: c.qty + qty, card: c.card ?? card);
+      return cards[i].qty;
+    }
+    cards = [...cards, DeckCard(card.name, qty, card: card)];
+    return qty;
+  }
+
+  /// Set a card's count; 0 or less removes it.
+  void setQty(String key, int qty) {
+    if (qty <= 0) {
+      cards = cards.where((c) => c.key != key).toList();
+    } else {
+      cards = [for (final c in cards) c.key == key ? c.copyWith(qty: qty) : c];
+    }
+  }
+
+  void setCommander(String key, bool commander) {
+    cards = [for (final c in cards) c.key == key ? c.copyWith(commander: commander) : c];
+  }
+
+  /// Show a different printing for a card (doesn't change what you need).
+  void setPrinting(String key, CardPrint card) {
+    cards = [for (final c in cards) c.key == key ? c.copyWith(card: card) : c];
+  }
+
+  /// Colour identity of the commander(s), or null if unknown / no commander.
+  Set<String>? get commanderColours {
+    final cs = commanders;
+    if (cs.isEmpty || cs.any((c) => c.card == null)) return null;
+    return {for (final c in cs) ...c.card!.colorIdentity};
+  }
 
   /// Copies of each card name this deck needs.
   Map<String, int> get needs {
@@ -105,6 +168,21 @@ class DeckStore extends ChangeNotifier {
     _decks.remove(d);
     notifyListeners();
     await _save();
+  }
+
+  /// Fetch card details for any cards that don't have them yet (imported
+  /// lists only store names). Returns how many are still without details.
+  Future<int> fillDetails(Deck d, ScryfallClient scryfall) async {
+    final missing = d.cards.where((c) => c.card == null).toList();
+    if (missing.isEmpty) return 0;
+    final found = await scryfall.collection([for (final c in missing) {'name': c.name}]);
+    final byKey = <String, CardPrint>{};
+    for (final p in found) {
+      byKey[nameKey(p.name)] = p;
+    }
+    d.cards = [for (final c in d.cards) c.card == null && byKey[c.key] != null ? c.copyWith(card: byKey[c.key]) : c];
+    await changed();
+    return d.cards.where((c) => c.card == null).length;
   }
 
   Future<void> replaceAll(List<Deck> decks) async {

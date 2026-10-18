@@ -27,6 +27,10 @@ class CardPrint {
   /// Mana value; null when unknown.
   final double? cmc;
 
+  /// Mana cost like "{2}{U}{U}"; both faces joined by " // " for
+  /// double-faced cards. Empty when unknown or for lands.
+  final String manaCost;
+
   bool get hasDetails => typeLine.isNotEmpty;
 
   CardPrint({
@@ -45,6 +49,7 @@ class CardPrint {
     this.colorIdentity = const [],
     this.typeLine = '',
     this.cmc,
+    this.manaCost = '',
   });
 
   factory CardPrint.fromScryfall(Map<String, dynamic> j) {
@@ -57,6 +62,13 @@ class CardPrint {
     var typeLine = j['type_line'] as String?;
     if (typeLine == null && faces != null && faces.isNotEmpty) {
       typeLine = (faces.first as Map)['type_line'] as String?;
+    }
+    var manaCost = j['mana_cost'] as String?;
+    if ((manaCost == null || manaCost.isEmpty) && faces != null && faces.isNotEmpty) {
+      manaCost = faces
+          .map((f) => (f as Map)['mana_cost'] as String? ?? '')
+          .where((m) => m.isNotEmpty)
+          .join(' // ');
     }
     return CardPrint(
       id: j['id'] as String,
@@ -74,6 +86,7 @@ class CardPrint {
       colorIdentity: ((j['color_identity'] as List?) ?? const []).cast<String>(),
       typeLine: typeLine ?? '',
       cmc: (j['cmc'] as num?)?.toDouble(),
+      manaCost: manaCost ?? '',
     );
   }
 
@@ -95,6 +108,7 @@ class CardPrint {
         'color_identity': colorIdentity,
         if (typeLine.isNotEmpty) 'type_line': typeLine,
         if (cmc != null) 'cmc': cmc,
+        if (manaCost.isNotEmpty) 'mana_cost': manaCost,
       };
 
   /// Name match that tolerates double-faced "A // B" names.

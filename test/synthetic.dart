@@ -24,6 +24,7 @@ SyntheticScene renderScene({
   double scale = 1,
   double noise = 4,
   int seed = 1,
+  int streaks = 0,
 }) {
   final rnd = math.Random(seed);
   final guide = guideBox(width / height);
@@ -39,6 +40,31 @@ SyntheticScene renderScene({
   }
 
   final truth = Quad([corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1)]);
+
+  // Busy playmat: short thick bright/dark strokes (like flame art) on the mat.
+  final strokes = <(double, double, double, double, double, List<int>)>[];
+  const palette = [
+    [200, 90, 30],
+    [250, 160, 60],
+    [10, 10, 10],
+  ];
+  for (var i = 0; i < streaks; i++) {
+    final x = rnd.nextDouble() * width, y = rnd.nextDouble() * height;
+    final len = 20 + rnd.nextDouble() * 60, ang = rnd.nextDouble() * math.pi;
+    final thick = 3 + rnd.nextDouble() * 5;
+    strokes.add((x, y, x + len * math.cos(ang), y + len * math.sin(ang), thick, palette[i % 3]));
+  }
+  List<int>? strokeAt(double px, double py) {
+    for (final (x0, y0, x1, y1, t, c) in strokes) {
+      final dx = x1 - x0, dy = y1 - y0;
+      final l2 = dx * dx + dy * dy;
+      var u = ((px - x0) * dx + (py - y0) * dy) / l2;
+      u = u < 0 ? 0 : (u > 1 ? 1 : u);
+      final ex = x0 + u * dx - px, ey = y0 + u * dy - py;
+      if (ex * ex + ey * ey <= t * t / 4) return c;
+    }
+    return null;
+  }
   final img = RgbImage(width, height);
   final b = blackBorder ? border : const [220, 220, 220];
   for (var y = 0; y < height; y++) {
@@ -49,7 +75,7 @@ SyntheticScene renderScene({
       final v = (-rx * sa + ry * ca) / ch + 0.5;
       List<int> c;
       if (u < 0 || u > 1 || v < 0 || v > 1) {
-        c = mat;
+        c = strokes.isEmpty ? mat : (strokeAt(x + 0.5, y + 0.5) ?? mat);
       } else if (u < 0.045 || u > 0.955 || v < 0.032 || v > 0.968) {
         c = b;
       } else if (v > 0.045 && v < 0.10 && u > 0.065 && u < 0.935) {

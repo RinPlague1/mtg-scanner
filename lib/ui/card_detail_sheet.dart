@@ -33,6 +33,7 @@ class _CardDetailState extends State<_CardDetail> {
   late final Future<Map<String, dynamic>?> _full = widget.services.scryfall.cardJson(widget.card.id);
   bool _foil = false;
   Binder _binder = Binder.collection;
+  int _deckQty = 1;
 
   CardPrint get c => widget.card;
 
@@ -78,16 +79,18 @@ class _CardDetailState extends State<_CardDetail> {
     );
     if (deck == null) return;
     final key = nameKey(c.name);
-    if (deck.cards.any((x) => x.key == key)) {
+    final existing = deck.byKey(key);
+    final basic = c.typeLine.toLowerCase().contains('basic');
+    if (existing != null && deck.format == 'commander' && !basic) {
       if (mounted) showMessage(context, '${c.name} is already in ${deck.name}');
       return;
     }
-    deck.cards = [...deck.cards, DeckCard(c.name, 1)];
+    final n = deck.addCard(c, qty: _deckQty);
     await widget.services.decks.changed();
-    final owned = widget.services.collection.ownedCount(key) > 0;
+    final owned = widget.services.collection.ownedCount(key) >= n;
     if (mounted) {
       showMessage(context,
-          'Added ${c.name} to ${deck.name}${owned ? '' : '. It\'s now on your wants'}');
+          '${c.name}: $n in ${deck.name}${owned ? '' : '. Missing copies are on your wants'}');
     }
   }
 
@@ -164,11 +167,24 @@ class _CardDetailState extends State<_CardDetail> {
                 label: const Text('Wishlist'),
                 onPressed: _addToWishlist,
               ),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.layers_outlined),
-                label: Text(widget.forDeckId != null ? 'Add to this deck' : 'Add to a deck'),
-                onPressed: _addToDeck,
-              ),
+              Row(mainAxisSize: MainAxisSize.min, children: [
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.remove),
+                  onPressed: _deckQty > 1 ? () => setState(() => _deckQty--) : null,
+                ),
+                Text('$_deckQty'),
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.add),
+                  onPressed: () => setState(() => _deckQty++),
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.layers_outlined),
+                  label: Text(widget.forDeckId != null ? 'Add to this deck' : 'Add to a deck'),
+                  onPressed: _addToDeck,
+                ),
+              ]),
               OutlinedButton.icon(
                 icon: const Icon(Icons.open_in_new),
                 label: const Text('View on Scryfall'),

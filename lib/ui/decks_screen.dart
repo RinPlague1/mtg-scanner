@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/decks.dart';
 import '../data/models.dart';
 import '../services.dart';
+import 'deck_screen.dart';
 import 'import_screen.dart';
 import 'wants_screen.dart';
 import 'widgets.dart';
@@ -32,18 +33,16 @@ class DecksScreen extends StatelessWidget {
             ],
           ),
           floatingActionButton: FloatingActionButton.extended(
-            icon: const Icon(Icons.upload_file),
-            label: const Text('Import deck'),
-            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => ImportScreen(services: s, initialTarget: ImportTarget.deck),
-            )),
+            icon: const Icon(Icons.add),
+            label: const Text('New deck'),
+            onPressed: () => _newDeck(context),
           ),
           body: decks.isEmpty
               ? const EmptyState(
                   icon: Icons.layers_outlined,
                   title: 'No decks yet',
-                  body: 'Import a decklist (TXT or CSV from Moxfield, Archidekt or Arena). '
-                      'Cards missing from Built and Brewing decks become trade wants automatically.',
+                  body: 'Build a deck from scratch, or import a decklist (TXT or CSV from Moxfield, '
+                      'Archidekt or Arena). Cards missing from Built and Brewing decks become trade wants automatically.',
                 )
               : ListView(
                   padding: const EdgeInsets.only(bottom: 88),
@@ -70,7 +69,9 @@ class DecksScreen extends StatelessWidget {
     });
     final commanders = d.commanders.map((c) => c.name).join(' & ');
     return ListTile(
-      leading: const Icon(Icons.layers),
+      leading: d.commanders.isNotEmpty && d.commanders.first.card?.imageUrl != null
+          ? CardThumb(d.commanders.first.card!.imageUrl, width: 32)
+          : const Icon(Icons.layers),
       title: Text(d.name),
       subtitle: Text([
         if (commanders.isNotEmpty) commanders,
@@ -82,128 +83,60 @@ class DecksScreen extends StatelessWidget {
       )),
     );
   }
-}
 
-class DeckDetailScreen extends StatelessWidget {
-  final AppServices services;
-  final String deckId;
-  const DeckDetailScreen({super.key, required this.services, required this.deckId});
-
-  @override
-  Widget build(BuildContext context) {
-    final s = services;
-    return ListenableBuilder(
-      listenable: Listenable.merge([s.decks, s.collection]),
-      builder: (context, _) {
-        final d = s.decks.byId(deckId);
-        if (d == null) return const Scaffold(body: Center(child: Text('Deck deleted')));
-        final rows = d.cards.map((c) => (card: c, have: s.collection.ownedCount(c.key))).toList()
-          ..sort((a, b) {
-            final am = a.have < a.card.qty, bm = b.have < b.card.qty;
-            if (a.card.commander != b.card.commander) return a.card.commander ? -1 : 1;
-            if (am != bm) return am ? -1 : 1;
-            return a.card.name.compareTo(b.card.name);
-          });
-        final missing = rows.fold(0, (n, r) => n + (r.card.qty > r.have ? r.card.qty - r.have : 0));
-        return Scaffold(
-          appBar: AppBar(
-            title: Text(d.name),
-            actions: [
-              IconButton(
-                tooltip: 'Rename',
-                icon: const Icon(Icons.edit),
-                onPressed: () => _rename(context, d),
-              ),
-              IconButton(
-                tooltip: 'Delete deck',
-                icon: const Icon(Icons.delete_outline),
-                onPressed: () => _delete(context, d),
-              ),
-            ],
+  Future<void> _newDeck(BuildContext context) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.edit_note),
+            title: const Text('Build from scratch'),
+            subtitle: const Text('Start empty and add cards from Scryfall or your collection'),
+            onTap: () => Navigator.pop(ctx, 'empty'),
           ),
-          body: ListView(children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                SegmentedButton<DeckStatus>(
-                  segments: [
-                    for (final st in DeckStatus.values) ButtonSegment(value: st, label: Text(st.label)),
-                  ],
-                  selected: {d.status},
-                  onSelectionChanged: (v) {
-                    d.status = v.first;
-                    s.decks.changed();
-                  },
-                ),
-                const SizedBox(height: 8),
-                Text(switch (d.status) {
-                  DeckStatus.built => missing == 0
-                      ? 'You own every card. These copies are kept out of trades.'
-                      : '$missing cards missing, and they are on your trade wants (top priority). '
-                          'Owned copies are kept out of trades.',
-                  DeckStatus.brewing => missing == 0
-                      ? 'You own every card.'
-                      : '$missing cards missing, and they are on your trade wants.',
-                  DeckStatus.retired => 'Retired: nothing is reserved, and spare copies can be traded.',
-                }),
-              ]),
-            ),
-            const Divider(height: 1),
-            for (final r in rows)
-              ListTile(
-                dense: true,
-                leading: r.card.commander
-                    ? const Icon(Icons.star, color: Colors.amber)
-                    : Icon(
-                        r.have >= r.card.qty ? Icons.check_circle : Icons.radio_button_unchecked,
-                        color: r.have >= r.card.qty ? Colors.greenAccent : null,
-                      ),
-                title: Text('${r.card.qty}× ${r.card.name}'),
-                trailing: r.have >= r.card.qty
-                    ? null
-                    : Text(r.have == 0 ? 'missing' : 'own ${r.have}',
-                        style: TextStyle(color: Theme.of(context).colorScheme.error)),
-              ),
-          ]),
-        );
-      },
+          ListTile(
+            leading: const Icon(Icons.upload_file),
+            title: const Text('Import a decklist'),
+            subtitle: const Text('TXT or CSV from Moxfield, Archidekt or Arena'),
+            onTap: () => Navigator.pop(ctx, 'import'),
+          ),
+        ]),
+      ),
     );
-  }
-
-  Future<void> _rename(BuildContext context, Deck d) async {
-    final c = TextEditingController(text: d.name);
+    if (choice == null || !context.mounted) return;
+    if (choice == 'import') {
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => ImportScreen(services: services, initialTarget: ImportTarget.deck),
+      ));
+      return;
+    }
+    final c = TextEditingController();
     final name = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Rename deck'),
-        content: TextField(controller: c, autofocus: true),
+        title: const Text('New deck'),
+        content: TextField(
+          controller: c,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(labelText: 'Deck name'),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, c.text.trim()), child: const Text('Save')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, c.text.trim()), child: const Text('Create')),
         ],
       ),
     );
-    if (name != null && name.isNotEmpty) {
-      d.name = name;
-      await services.decks.changed();
-    }
-  }
-
-  Future<void> _delete(BuildContext context, Deck d) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Delete "${d.name}"?'),
-        content: const Text('Your cards stay in your collection.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
-        ],
-      ),
-    );
-    if (ok == true) {
-      await services.decks.remove(d);
-      if (context.mounted) Navigator.pop(context);
-    }
+    if (name == null || !context.mounted) return;
+    // New decks start as Brewing, so nothing is reserved until you mark it Built.
+    final deck = Deck(name: name.isEmpty ? 'New deck' : name, status: DeckStatus.brewing);
+    await services.decks.add(deck);
+    if (!context.mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => DeckDetailScreen(services: services, deckId: deck.id),
+    ));
   }
 }

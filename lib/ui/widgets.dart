@@ -96,3 +96,53 @@ class EmptyState extends StatelessWidget {
     );
   }
 }
+
+/// Colour for a mana symbol letter (W U B R G), grey for generic/colourless.
+Color manaColour(String symbol) => switch (symbol) {
+      'W' => const Color(0xFFF3EDC8),
+      'U' => const Color(0xFF3D8FD1),
+      'B' => const Color(0xFF6E6268),
+      'R' => const Color(0xFFE0533D),
+      'G' => const Color(0xFF2E9A5B),
+      _ => const Color(0xFFBEB9B2),
+    };
+
+/// A mana cost like "{2}{U}{U}" drawn as small coloured pips.
+class ManaCost extends StatelessWidget {
+  final String cost;
+  final double size;
+  const ManaCost(this.cost, {super.key, this.size = 15});
+
+  @override
+  Widget build(BuildContext context) {
+    if (cost.isEmpty) return const SizedBox.shrink();
+    final faces = cost.split(' // ');
+    final children = <Widget>[];
+    for (var f = 0; f < faces.length; f++) {
+      if (f > 0) children.add(Text(' // ', style: TextStyle(fontSize: size * 0.8)));
+      for (final m in RegExp(r'\{([^}]+)\}').allMatches(faces[f])) {
+        final sym = m.group(1)!;
+        final parts = sym.split('/');
+        final colour = parts.firstWhere((p) => 'WUBRG'.contains(p) && p.length == 1, orElse: () => '');
+        final label = parts.length > 1 ? parts.where((p) => p != 'P').join() : sym;
+        children.add(Container(
+          width: size,
+          height: size,
+          margin: const EdgeInsets.only(left: 1),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(color: manaColour(colour), shape: BoxShape.circle),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: size * (label.length > 1 ? 0.45 : 0.65),
+              fontWeight: FontWeight.w700,
+              color: colour == 'U' || colour == 'B' ? Colors.white : Colors.black,
+              height: 1,
+            ),
+          ),
+        ));
+      }
+    }
+    return Row(mainAxisSize: MainAxisSize.min, children: children);
+  }
+}

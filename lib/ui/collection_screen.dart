@@ -5,10 +5,12 @@ import '../data/collection.dart';
 import '../data/collection_query.dart';
 import '../data/models.dart';
 import '../data/prices.dart';
+import '../data/scryfall.dart';
 import '../services.dart';
 import '../social/backend.dart';
 import 'collection_tools.dart';
 import 'import_screen.dart';
+import 'printing_picker.dart';
 import 'scan_review_screen.dart';
 import 'share_showcase.dart';
 import 'widgets.dart';
@@ -535,18 +537,41 @@ class _EntrySheet extends StatefulWidget {
 }
 
 class _EntrySheetState extends State<_EntrySheet> {
+  /// Replaced when the printing or finish changes (it may merge into another entry).
+  late CollectionEntry _entry = widget.entry;
   late int _moveQty = widget.entry.quantity;
+
+  Future<void> _changePrinting() async {
+    final picked = await pickPrinting(context, widget.services.scryfall, _entry.card);
+    if (picked == null || !mounted) return;
+    // Keep the finish if the new printing has it, else use what it does have.
+    final foil = (_entry.foil ? canBeFoil(picked) : canBeNonFoil(picked)) ? _entry.foil : defaultFoil(picked);
+    await _apply(picked, foil);
+  }
+
+  Future<void> _apply(CardPrint card, bool foil) async {
+    final before = _entry.quantity;
+    final result = await widget.services.collection.changePrinting(_entry, card, foil: foil);
+    if (!mounted) return;
+    setState(() {
+      _entry = result;
+      _moveQty = result.quantity;
+    });
+    if (result.quantity > before) {
+      showMessage(context, 'Merged with the ${result.quantity - before} you already had');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final e = widget.entry;
+    final e = _entry;
     final store = widget.services.collection;
     final decksUsing = widget.services.decks.decks
         .where((d) => d.cards.any((c) => c.key == e.nameKey))
         .map((d) => '${d.name} (${d.status.label})')
         .toList();
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -565,7 +590,28 @@ class _EntrySheetState extends State<_EntrySheet> {
               ]),
             ),
           ]),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
+          Text('Printing #${e.card.collectorNumber} · ${e.card.setCode.toUpperCase()}',
+              style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 4),
+          Wrap(spacing: 8, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
+            SegmentedButton<bool>(
+              showSelectedIcon: false,
+              style: const ButtonStyle(visualDensity: VisualDensity.compact),
+              segments: [
+                ButtonSegment(value: false, label: const Text('Non-foil'), enabled: canBeNonFoil(e.card) || !e.foil),
+                ButtonSegment(value: true, label: const Text('Foil'), enabled: canBeFoil(e.card) || e.foil),
+              ],
+              selected: {e.foil},
+              onSelectionChanged: (v) => _apply(e.card, v.first),
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.swap_horiz, size: 18),
+              label: const Text('Change printing'),
+              onPressed: _changePrinting,
+            ),
+          ]),
+          const SizedBox(height: 8),
           Row(children: [
             const Text('Quantity'),
             const Spacer(),

@@ -176,6 +176,23 @@ void main() {
       expect(store.ownedCount('rhystic study'), 1);
     });
 
+    test('changing printing or finish keeps binder and tags, and merges', () async {
+      final store = CollectionStore();
+      await store.add(card('a', 'Sol Ring'), quantity: 2, binder: Binder.trade);
+      await store.add(card('b', 'Sol Ring'), quantity: 1, binder: Binder.trade);
+      store.entries.firstWhere((e) => e.card.id == 'a').tags.add('cube');
+      final a = store.entries.firstWhere((e) => e.card.id == 'a');
+      final merged = await store.changePrinting(a, card('b', 'Sol Ring'));
+      expect(store.entries.length, 1);
+      expect(merged.card.id, 'b');
+      expect(merged.quantity, 3);
+      expect(merged.binder, Binder.trade);
+      expect(merged.tags, contains('cube'));
+      final foiled = await store.changePrinting(merged, merged.card, foil: true);
+      expect(store.entries.single.foil, isTrue);
+      expect(foiled.quantity, 3);
+    });
+
     test('old saved entries without binder or condition load as collection / NM', () {
       final e = CollectionEntry.fromJson({
         'card': card('a', 'Sol Ring').toJson(),

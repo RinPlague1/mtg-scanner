@@ -216,7 +216,7 @@ class ScanController extends ChangeNotifier {
     final nameLines = await _ocr(a.name, 'name');
     final setLines = await _ocr(a.setLine, 'set');
     final candidates = CardTextParser.nameCandidates(nameLines);
-    final setInfo = CardTextParser.setInfo(setLines);
+    var setInfo = CardTextParser.setInfo(setLines);
     lastRawName = candidates.isEmpty ? null : candidates.first;
     lastNameLines = nameLines;
     lastSetLines = setLines;
@@ -242,6 +242,13 @@ class ScanController extends ChangeNotifier {
         }
       }
     }
+    // Frames where the card's edges weren't found read from the wrong place:
+    // ignore them rather than risk a wrong card.
+    if (a.sidesFound < 2) {
+      read = null;
+      setInfo = null;
+    }
+
     // Title covered or unreadable: the set code + collector number on the
     // bottom line identify the exact card by themselves.
     final codeComplete = setInfo != null && setInfo.complete;
@@ -262,7 +269,7 @@ class ScanController extends ChangeNotifier {
     }
 
     _reads.add(read);
-    if (_reads.length > 4) _reads.removeAt(0);
+    if (_reads.length > 5) _reads.removeAt(0);
 
     hint = _glareFrames >= 2
         ? ScanHint.glare
@@ -398,6 +405,11 @@ class ScanController extends ChangeNotifier {
   /// along as a cross-check. Only if no code agrees does the title decide on
   /// its own (then two frames must agree on it).
   _Read? _vote() {
+    // 0. Fast path: this frame read both a title and a full set code + number.
+    //    Look it up now; _resolve cross-checks them and handles a mismatch.
+    final last = _reads.isEmpty ? null : _reads.last;
+    if (last != null && !last.codeOnly && last.set != null && last.set!.complete) return last;
+
     // 1. Set code + collector number.
     final codes = <SetInfo, int>{};
     for (final r in _reads) {
@@ -412,7 +424,10 @@ class ScanController extends ChangeNotifier {
         codeN = n;
       }
     });
-    if (code != null && codeN >= 2) {
+    // Two frames are enough when a title came with the code (it'll be
+    // cross-checked); a code on its own needs three, to avoid misreads.
+    final codeHasTitle = code != null && _reads.any((r) => r != null && !r.codeOnly && r.set == code);
+    if (code != null && codeN >= (codeHasTitle ? 2 : 3)) {
       // Cross-reference: the most common title among frames with this code.
       final names = <String, int>{};
       final display = <String, String>{};

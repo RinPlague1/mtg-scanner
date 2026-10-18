@@ -32,6 +32,18 @@ void main() {
     expectLocked(renderScene(blackBorder: false, dx: 10, dy: 10, angleDeg: 2));
   });
 
+  test('busy patterned mat (flame-like strokes) around the card', () {
+    for (final seed in [1, 2, 3, 4]) {
+      expectLocked(renderScene(streaks: 40, seed: seed, dx: 8, dy: 10, angleDeg: -2, scale: 0.93), tol: 5);
+    }
+  });
+
+  test('smaller card on a busy mat', () {
+    for (final seed in [5, 6, 7]) {
+      expectLocked(renderScene(streaks: 40, seed: seed, dx: -6, dy: 4, angleDeg: 3, scale: 0.86), tol: 5);
+    }
+  });
+
   test('border identical to mat falls back to an inner edge, inside crop padding', () {
     final s = renderScene(mat: const [12, 12, 14], dx: 10, dy: 10, angleDeg: 2);
     final r = refiner.refine(s.image, s.guide);

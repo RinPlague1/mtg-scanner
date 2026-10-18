@@ -27,6 +27,12 @@ import 'geometry.dart';
 ///     frame / art-box edges inside the card don't steal the match.
 ///  5. Falls back to the guide for any side it can't see, so a scan still
 ///     happens; the crop regions are padded to tolerate that.
+///  6. Scores a candidate line by a low percentile of the edge strength along
+///     it, not the mean: a real card edge runs the whole side, while a busy
+///     playmat (flames, foil art) only has short strong streaks.
+///  7. Keeps a few candidate edges per side and picks the combination that
+///     forms a 63×88 card shape, preferring the outermost edges. A pattern
+///     edge on the mat outside the card no longer drags the outline off.
 class EdgeRefiner {
   /// How far either side of the guide edge to search, as a fraction of the
   /// guide's size in that direction.
@@ -86,10 +92,10 @@ class EdgeRefiner {
       }
     }
 
-    // 2) Per side: allow +-1 deg around the global angle (mild perspective),
-    //    then take the outermost significant peak.
-    final lines = <_Side, _Line>{};
-    final found = <_Side, double>{};
+    // 2) Per side: allow +-1 deg around the global angle (mild perspective)
+    //    and keep up to four significant edges, outermost first. The guide
+    //    edge is always the last option, for a side that isn't visible.
+    final cands = <_Side, List<_Cand>>{};
     for (final b in bands.values) {
       final sgn = b.horizontal ? 1.0 : -1.0;
       final slopes = [-1.0, -0.5, 0.0, 0.5, 1.0]
@@ -97,39 +103,74 @@ class EdgeRefiner {
           .toList();
       final prof = _profile(maps, w, h, b, slopes);
       final outerFirst = b.side == _Side.top || b.side == _Side.left;
-      final pick = _pickOutermost(prof.scores, outerFirst);
       final mid = (b.spanLo + b.spanHi) / 2;
-      if (pick != null) {
-        lines[b.side] = _Line(prof.positions[pick.index].toDouble(), prof.slopes[pick.index], mid);
-        found[b.side] = pick.significance;
-      } else {
-        // Not visible: use the guide edge at the global angle.
-        lines[b.side] = _Line(b.guidePos, math.tan(sgn * bestAngle * math.pi / 180), mid);
+      cands[b.side] = [
+        for (final pick in _significantPeaks(prof.scores, outerFirst))
+          _Cand(_Line(prof.positions[pick.index].toDouble(), prof.slopes[pick.index], mid), pick.significance),
+        _Cand(_Line(b.guidePos, math.tan(sgn * bestAngle * math.pi / 180), mid), null),
+      ];
+    }
+
+    Quad quadOf(_Cand t, _Cand bo, _Cand l, _Cand r) => Quad([
+          _intersect(t.line, l.line),
+          _intersect(t.line, r.line),
+          _intersect(bo.line, r.line),
+          _intersect(bo.line, l.line),
+        ]);
+
+    // 3) Choose the combination that makes a card-shaped rectangle of about
+    //    guide size: most real edges first, then outermost, then best shape.
+    final gw = g.width, gh = g.height;
+    final ts = cands[_Side.top]!, bs = cands[_Side.bottom]!, ls = cands[_Side.left]!, rs = cands[_Side.right]!;
+    Quad? bestQuad;
+    var bestFound = -1, bestRank = 1 << 30;
+    var bestErr = double.infinity;
+    for (var i = 0; i < ts.length; i++) {
+      for (var j = 0; j < bs.length; j++) {
+        for (var k = 0; k < ls.length; k++) {
+          for (var m = 0; m < rs.length; m++) {
+            final q = quadOf(ts[i], bs[j], ls[k], rs[m]);
+            final qw = (q.topWidth + q.bottomWidth) / 2;
+            final qh = (q.leftHeight + q.rightHeight) / 2;
+            if (qh <= 0) continue;
+            final err = ((qw / qh) - kCardAspect).abs() / kCardAspect;
+            if (err > 0.05 || qw < 0.6 * gw || qw > 1.3 * gw || qh < 0.6 * gh || qh > 1.3 * gh) continue;
+            final found = [ts[i], bs[j], ls[k], rs[m]].where((c) => c.significance != null).length;
+            final rank = i + j + k + m;
+            final better = found > bestFound ||
+                (found == bestFound && (rank < bestRank || (rank == bestRank && err < bestErr)));
+            if (better) {
+              bestQuad = q;
+              bestFound = found;
+              bestRank = rank;
+              bestErr = err;
+            }
+          }
+        }
       }
     }
 
-    final quad = Quad([
-      _intersect(lines[_Side.top]!, lines[_Side.left]!),
-      _intersect(lines[_Side.top]!, lines[_Side.right]!),
-      _intersect(lines[_Side.bottom]!, lines[_Side.right]!),
-      _intersect(lines[_Side.bottom]!, lines[_Side.left]!),
-    ]);
+    // No card-shaped combination: fall back to the outermost edge per side,
+    // checked by the looser sanity test below.
+    final quad = bestQuad ?? quadOf(ts.first, bs.first, ls.first, rs.first);
+    final foundSides = bestQuad != null
+        ? bestFound
+        : [ts.first, bs.first, ls.first, rs.first].where((c) => c.significance != null).length;
 
     // Sanity: a card is a 63x88 rectangle of roughly guide size. If the
     // result is badly off, trust the guide instead.
-    final gw = g.width, gh = g.height;
     final qw = (quad.topWidth + quad.bottomWidth) / 2;
     final qh = (quad.leftHeight + quad.rightHeight) / 2;
     final aspect = qh > 0 ? qw / qh : 0;
-    final sane = qw > 0.7 * gw &&
+    final sane = qw > 0.6 * gw &&
         qw < 1.3 * gw &&
-        qh > 0.7 * gh &&
+        qh > 0.6 * gh &&
         qh < 1.3 * gh &&
         (aspect - kCardAspect).abs() < 0.12 * kCardAspect;
 
     return RefineResult(
       quad: sane ? quad : Quad.fromBox(g),
-      sidesFound: sane ? found.length : 0,
+      sidesFound: sane ? foundSides : 0,
       angleDegrees: bestAngle,
     );
   }
@@ -192,18 +233,19 @@ class EdgeRefiner {
     final spanLim = b.horizontal ? w : h;
     final s0 = math.max(0, b.spanLo.ceil());
     final s1 = math.min(spanLim - 1, b.spanHi.floor());
+    final samples = Float64List(((s1 - s0) ~/ 2) + 2);
     for (var p = b.lo; p <= b.hi; p++) {
       var best = 0.0, bestT = 0.0;
       for (final t in slopes) {
-        var sum = 0.0;
         var count = 0;
         for (var s = s0; s <= s1; s += 2) {
           final q = (p + t * (s - mid)).round();
           if (q < 0 || q >= lim) continue;
-          sum += b.horizontal ? e[q * w + s] : e[s * w + q];
-          count++;
+          samples[count++] = b.horizontal ? e[q * w + s] : e[s * w + q];
         }
-        final score = count > 0 ? sum / count : 0.0;
+        // 35th percentile along the line: high only if the edge runs (most
+        // of) the full side, so short streaks on a patterned mat score low.
+        final score = count > 0 ? _lowPercentile(samples, count) : 0.0;
         if (score > best) {
           best = score;
           bestT = t;
@@ -216,10 +258,12 @@ class EdgeRefiner {
     return _Profile(positions, scores, bestSlopes);
   }
 
-  _Pick? _pickOutermost(List<double> score, bool outerFirst) {
+  /// Significant peaks in a side's profile, outermost first (at most [max]).
+  List<_Pick> _significantPeaks(List<double> score, bool outerFirst, {int max = 4}) {
     final n = score.length;
-    if (n < 3) return null;
-    for (var k = 0; k < n; k++) {
+    final out = <_Pick>[];
+    if (n < 3) return out;
+    for (var k = 0; k < n && out.length < max; k++) {
       final i = outerFirst ? k : n - 1 - k;
       if (i == 0 || i == n - 1) continue;
       if (score[i] < score[i - 1] || score[i] < score[i + 1]) continue; // not a peak
@@ -241,10 +285,16 @@ class EdgeRefiner {
       final base = _median(win);
       final spread = 1.4826 * _median(win.map((v) => (v - base).abs()).toList()) + 1e-6;
       if (score[i] >= base + math.max(6 * spread, minContrast)) {
-        return _Pick(i, (score[i] - base) / spread);
+        out.add(_Pick(i, (score[i] - base) / spread));
       }
     }
-    return null;
+    return out;
+  }
+
+  /// 35th percentile of the first [count] values (sorts a copy).
+  static double _lowPercentile(Float64List values, int count) {
+    final v = Float64List.fromList(values.sublist(0, count))..sort();
+    return v[((count - 1) * 0.35).round()];
   }
 
   static double _median(List<double> v) => _percentile(v, 0.5);
@@ -294,6 +344,14 @@ class _Profile {
   final List<double> scores;
   final List<double> slopes;
   _Profile(this.positions, this.scores, this.slopes);
+}
+
+class _Cand {
+  final _Line line;
+
+  /// Null for the guide fallback (side not actually seen).
+  final double? significance;
+  _Cand(this.line, this.significance);
 }
 
 class _Pick {
