@@ -1,0 +1,80 @@
+name: Build iOS (unsigned, for Sideloadly)
+
+# Run by hand: Actions → "Build iOS" → Run workflow. (macOS runners use your
+# free GitHub minutes 10× faster than Linux, so this doesn't run on every push.)
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      # The repo doesn't hold an ios/ folder; generate it.
+      - name: Generate iOS scaffolding
+        run: flutter create --org com.ollie --project-name mtg_dark_scanner --platforms ios .
+
+      - run: flutter pub get
+
+      # Writes ios/Podfile and the Flutter build settings without compiling.
+      - name: Configure Xcode project
+        run: flutter build ios --config-only --no-codesign --release
+
+      - name: iOS settings (camera permission, iOS 15.5 for ML Kit)
+        run: |
+          PLIST=ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Delete :NSCameraUsageDescription" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'The camera reads your cards so they can be added to your collection.'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Delete :CFBundleDisplayName" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string 'MTG Binder'" "$PLIST"
+          # ML Kit text recognition needs iOS 15.5 or newer.
+          if grep -q "^# platform :ios" ios/Podfile; then
+            sed -i '' "s/^# platform :ios.*/platform :ios, '15.5'/" ios/Podfile
+          else
+            sed -i '' "s/^platform :ios.*/platform :ios, '15.5'/" ios/Podfile
+          fi
+          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.5;/g' ios/Runner.xcodeproj/project.pbxproj
+          # Every pod builds for 15.5 too.
+          cat >> ios/Podfile <<'POD'
+
+          post_install do |installer|
+            installer.pods_project.targets.each do |target|
+              flutter_additional_ios_build_settings(target)
+              target.build_configurations.each do |config|
+                config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.5'
+              end
+            end
+          end
+          POD
+          # Keep only the last post_install (the one above).
+          ruby -e 's = File.read("ios/Podfile"); parts = s.split(/^post_install do/); s = parts.first + "post_install do" + parts.last if parts.size > 2; File.write("ios/Podfile", s)'
+          cd ios && pod install --repo-update
+
+      - name: Build (no signing)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SHOWCASE_URL: ${{ secrets.SHOWCASE_URL }}
+        run: >
+          flutter build ios --release --no-codesign
+          --dart-define=SUPABASE_URL="$SUPABASE_URL"
+          --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+          --dart-define=SHOWCASE_URL="$SHOWCASE_URL"
+
+      # An .ipa is just the app inside a "Payload" folder, zipped.
+      - name: Package .ipa
+        run: |
+          mkdir -p Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/
+          zip -qr mtg-binder-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mtg-binder-ios
+          path: mtg-binder-unsigned.ipa

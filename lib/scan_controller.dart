@@ -192,6 +192,23 @@ class ScanController extends ChangeNotifier {
     if (img.planes.length == 1) {
       return YuvFrame.nv21(Uint8List.fromList(img.planes[0].bytes), img.width, img.height, rotation);
     }
+    if (img.planes.length == 2) {
+      // iPhone: NV12, a Y plane plus one interleaved Cb,Cr plane.
+      final y = img.planes[0], uv = Uint8List.fromList(img.planes[1].bytes);
+      return YuvFrame(
+        sensorWidth: img.width,
+        sensorHeight: img.height,
+        rotation: rotation,
+        y: Uint8List.fromList(y.bytes),
+        yRowStride: y.bytesPerRow,
+        u: uv,
+        v: uv,
+        uOffset: 0,
+        vOffset: 1,
+        uvRowStride: img.planes[1].bytesPerRow,
+        uvPixelStride: 2,
+      );
+    }
     final y = img.planes[0], u = img.planes[1], v = img.planes[2];
     return YuvFrame(
       sensorWidth: img.width,
@@ -317,7 +334,8 @@ class ScanController extends ChangeNotifier {
   /// How crops are handed to ML Kit. Some phones' plugin builds fail on raw
   /// NV21 bytes (InputImageConverterError) or on file paths (a native
   /// NullPointerException), so on an error we move to the next way and retry.
-  static const ocrInputModes = ['bytes', 'bitmap', 'file'];
+  /// iPhone ML Kit takes BGRA bytes or an image file (no NV21, no bitmaps).
+  static final ocrInputModes = Platform.isIOS ? const ['bgra', 'file'] : const ['bytes', 'bitmap', 'file'];
   int _ocrMode = 0;
   String get ocrInputMode => ocrInputModes[_ocrMode];
   String? _cacheDir;
@@ -325,6 +343,24 @@ class ScanController extends ChangeNotifier {
   Future<InputImage> _inputFor(OcrCrop crop, String tag) async {
     final gray = Uint8List.sublistView(crop.nv21, 0, crop.width * crop.height);
     switch (ocrInputMode) {
+      case 'bgra':
+        final bgra = Uint8List(crop.width * crop.height * 4);
+        for (var i = 0, j = 0; i < gray.length; i++, j += 4) {
+          final v = gray[i];
+          bgra[j] = v;
+          bgra[j + 1] = v;
+          bgra[j + 2] = v;
+          bgra[j + 3] = 255;
+        }
+        return InputImage.fromBytes(
+          bytes: bgra,
+          metadata: InputImageMetadata(
+            size: Size(crop.width.toDouble(), crop.height.toDouble()),
+            rotation: InputImageRotation.rotation0deg,
+            format: InputImageFormat.bgra8888,
+            bytesPerRow: crop.width * 4,
+          ),
+        );
       case 'bitmap':
         final rgba = Uint8List(crop.width * crop.height * 4);
         for (var i = 0, j = 0; i < gray.length; i++, j += 4) {
