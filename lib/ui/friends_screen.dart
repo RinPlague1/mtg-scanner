@@ -6,6 +6,7 @@ import '../data/prices.dart';
 import '../data/trade_logic.dart';
 import '../services.dart';
 import '../social/backend.dart';
+import 'card_gallery.dart';
 import 'deck_screen.dart';
 import 'share_showcase.dart';
 import 'sign_in_panel.dart';
@@ -152,7 +153,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                       ),
                       IconButton.filled(
                         tooltip: 'Accept',
-                        icon: const Icon(Icons.check),
+                        icon: const Icon(Icons.check, color: Colors.black),
                         onPressed: () => runGuarded(context, () => social.respondFriend(f, true)),
                       ),
                     ]),
@@ -278,7 +279,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     final lists = s.social.lists[f.profile.id];
     final suggestion = s.social.suggestions.where((x) => x.friendId == f.profile.id).firstOrNull;
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: Scaffold(
         appBar: AppBar(
           title: Text(f.profile.label),
@@ -296,7 +297,13 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
           bottom: const TabBar(
             isScrollable: true,
             tabAlignment: TabAlignment.start,
-            tabs: [Tab(text: 'Showcase'), Tab(text: 'For trade'), Tab(text: 'Wants'), Tab(text: 'Decks')],
+            tabs: [
+              Tab(text: 'Matches'),
+              Tab(text: 'Showcase'),
+              Tab(text: 'For trade'),
+              Tab(text: 'Wants'),
+              Tab(text: 'Decks'),
+            ],
           ),
         ),
         floatingActionButton: FloatingActionButton.extended(
@@ -329,66 +336,74 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
               if (!snap.hasData) return const Center(child: CircularProgressIndicator());
               final rows = snap.data!.where((r) => r['binder'] == b.id).toList();
               if (rows.isEmpty) return EmptyState(icon: Icons.inbox, title: 'Nothing in ${b.label}');
-              if (b == Binder.showcase) {
-                return GridView.builder(
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 88),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                    childAspectRatio: 0.66,
-                    mainAxisSpacing: 8,
-                    crossAxisSpacing: 8,
-                  ),
-                  itemCount: rows.length,
-                  itemBuilder: (context, i) {
-                    final card = rows[i]['card'] as Map<String, dynamic>;
-                    final img = (card['image_uris'] as Map?)?['normal'] as String?;
-                    final qty = rows[i]['qty'] as int? ?? 1;
-                    final foil = rows[i]['foil'] as bool? ?? false;
-                    return Stack(children: [
+              // Every binder is an image gallery; tap a card to view it full size and swipe.
+              String? img(Map<String, dynamic> r) => ((r['card'] as Map)['image_uris'] as Map?)?['normal'] as String?;
+              String name(Map<String, dynamic> r) => (r['card'] as Map)['name'] as String? ?? '';
+              String info(Map<String, dynamic> r) {
+                final card = r['card'] as Map<String, dynamic>;
+                final foil = r['foil'] as bool? ?? false;
+                final prices = (card['prices'] as Map?) ?? const {};
+                final eur = double.tryParse('${foil ? prices['eur_foil'] : prices['eur']}');
+                return [
+                  '${card['set_name'] ?? (card['set'] as String? ?? '').toUpperCase()}',
+                  if (foil) 'foil',
+                  r['condition'] as String? ?? 'NM',
+                  if (eur != null) gbp(eur),
+                ].join(' · ');
+              }
+
+              return GridView.builder(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 88),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  childAspectRatio: 0.716,
+                  mainAxisSpacing: 8,
+                  crossAxisSpacing: 8,
+                ),
+                itemCount: rows.length,
+                itemBuilder: (context, i) {
+                  final r = rows[i];
+                  final qty = r['qty'] as int? ?? 1;
+                  final foil = r['foil'] as bool? ?? false;
+                  final url = img(r);
+                  return GestureDetector(
+                    onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => CardGalleryScreen(
+                        count: rows.length,
+                        initialIndex: i,
+                        image: (ctx, n) => CardGalleryScreen.networkCard(img(rows[n]), name(rows[n])),
+                        title: (n) => '${rows[n]['qty'] ?? 1}× ${name(rows[n])}',
+                        subtitle: (n) => info(rows[n]),
+                      ),
+                    )),
+                    child: Stack(children: [
                       Positioned.fill(
-                        child: img == null
-                            ? Card(child: Center(child: Text(card['name'] as String? ?? '', textAlign: TextAlign.center)))
+                        child: url == null
+                            ? Card(child: Center(child: Text(name(r), textAlign: TextAlign.center)))
                             : ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
-                                child: Image.network(img, fit: BoxFit.cover),
+                                child: Image.network(url, fit: BoxFit.cover),
                               ),
                       ),
                       if (qty > 1 || foil)
                         Positioned(
                           right: 4,
                           top: 4,
-                          child: Chip(
-                            visualDensity: VisualDensity.compact,
-                            label: Text([if (qty > 1) '×$qty', if (foil) '✦'].join(' ')),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(10)),
+                            child: Text([if (qty > 1) '×$qty', if (foil) '✦'].join(' '),
+                                style: const TextStyle(color: Colors.white, fontSize: 12)),
                           ),
                         ),
-                    ]);
-                  },
-                );
-              }
-              return ListView(padding: const EdgeInsets.only(bottom: 88), children: [
-                for (final r in rows)
-                  Builder(builder: (context) {
-                    final card = r['card'] as Map<String, dynamic>;
-                    final foil = r['foil'] as bool? ?? false;
-                    final prices = (card['prices'] as Map?) ?? const {};
-                    final eur = double.tryParse('${foil ? prices['eur_foil'] : prices['eur']}');
-                    return ListTile(
-                      dense: true,
-                      leading: CardThumb((card['image_uris'] as Map?)?['normal'] as String?, width: 32),
-                      title: Text('${r['qty']}× ${card['name']}'),
-                      subtitle: Text([
-                        (card['set'] as String? ?? '').toUpperCase(),
-                        if (foil) 'foil',
-                        r['condition'] as String? ?? 'NM',
-                        if (eur != null) gbp(eur),
-                      ].join(' · ')),
-                    );
-                  }),
-              ]);
+                    ]),
+                  );
+                },
+              );
             }
 
             return TabBarView(children: [
+              _matches(lists?.wants ?? const [], snap.data),
               binderView(Binder.showcase),
               binderView(Binder.trade),
               _wants(lists?.wants ?? const []),
@@ -399,6 +414,77 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
       ),
     );
   }
+
+  /// What they want that you own, and what you want that they have.
+  Widget _matches(List<WantCard> theirWants, List<Map<String, dynamic>>? theirBinders) {
+    final s = widget.services;
+    final f = widget.friend;
+    final spares = {for (final c in s.social.mySpares) c.key: c.qty};
+    final youHave = [
+      for (final w in theirWants)
+        if (s.collection.ownedCount(w.key) > 0) (want: w, owned: s.collection.ownedCount(w.key), spare: spares[w.key] ?? 0),
+    ]..sort((a, b) => (b.spare > 0 ? 1 : 0).compareTo(a.spare > 0 ? 1 : 0));
+
+    // Their Showcase / Up for trade cards, by name.
+    final theirs = <String, ({String name, int trade, int showcase, String? image})>{};
+    for (final r in theirBinders ?? const <Map<String, dynamic>>[]) {
+      final card = r['card'] as Map<String, dynamic>;
+      final name = card['name'] as String? ?? '';
+      final key = nameKey(name);
+      final qty = (r['qty'] as num?)?.toInt() ?? 1;
+      final prev = theirs[key] ?? (name: name, trade: 0, showcase: 0, image: (card['image_uris'] as Map?)?['normal'] as String?);
+      theirs[key] = r['binder'] == 'trade'
+          ? (name: prev.name, trade: prev.trade + qty, showcase: prev.showcase, image: prev.image)
+          : (name: prev.name, trade: prev.trade, showcase: prev.showcase + qty, image: prev.image);
+    }
+    final theyHave = [
+      for (final w in s.social.myWants)
+        if (theirs[w.key] != null) (want: w, have: theirs[w.key]!),
+    ]..sort((a, b) => b.have.trade.compareTo(a.have.trade));
+
+    final theme = Theme.of(context);
+    return ListView(padding: const EdgeInsets.only(bottom: 88), children: [
+      _heading('${f.profile.label} wants, you have (${youHave.length})'),
+      if (youHave.isEmpty)
+        const Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text('Nothing on their wants is in your collection.')),
+      for (final m in youHave)
+        ListTile(
+          dense: true,
+          leading: Icon(m.spare > 0 ? Icons.check_circle : Icons.inventory_2_outlined,
+              color: m.spare > 0 ? Colors.greenAccent : null),
+          title: Text('${m.want.qty}× ${m.want.name}'),
+          subtitle: Text([
+            m.spare > 0 ? 'you have ${m.spare} spare' : 'you own ${m.owned}, but your decks or Showcase use them',
+            if (m.want.reason.isNotEmpty) 'they: ${m.want.reason}',
+          ].join(' · ')),
+          trailing: m.want.priority >= 3 ? Icon(Icons.priority_high, color: theme.colorScheme.error) : null,
+        ),
+      _heading('You want, ${f.profile.label} has (${theyHave.length})'),
+      if (theirBinders == null)
+        const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator()))
+      else if (theyHave.isEmpty)
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 16),
+          child: Text('Nothing on your wants is in their Showcase or Up for trade.'),
+        ),
+      for (final m in theyHave)
+        ListTile(
+          dense: true,
+          leading: CardThumb(m.have.image, width: 32),
+          title: Text('${m.want.qty}× ${m.want.name}'),
+          subtitle: Text([
+            if (m.have.trade > 0) '${m.have.trade} up for trade',
+            if (m.have.showcase > 0) '${m.have.showcase} in Showcase (not for trade)',
+            m.want.reason,
+          ].join(' · ')),
+        ),
+    ]);
+  }
+
+  Widget _heading(String text) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+        child: Text(text, style: Theme.of(context).textTheme.titleSmall),
+      );
 
   Widget _wants(List<WantCard> wants) {
     if (wants.isEmpty) return const EmptyState(icon: Icons.favorite_border, title: 'No wants shared yet');

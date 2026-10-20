@@ -38,6 +38,13 @@ class CollectionQuery {
   final Set<String> tags;
   final FoilFilter foil;
 
+  /// Set codes (lower case), e.g. {'dft', 'tdm'}.
+  final Set<String> sets;
+
+  /// Price range per copy in EUR (the app shows GBP; convert at the edge).
+  final double? minEur;
+  final double? maxEur;
+
   const CollectionQuery({
     this.text = '',
     this.sortBy = SortBy.added,
@@ -48,6 +55,9 @@ class CollectionQuery {
     this.conditions = const {},
     this.tags = const {},
     this.foil = FoilFilter.any,
+    this.sets = const {},
+    this.minEur,
+    this.maxEur,
   });
 
   /// Number of active filters (not counting search text or sort).
@@ -57,7 +67,9 @@ class CollectionQuery {
       (rarities.isEmpty ? 0 : 1) +
       (conditions.isEmpty ? 0 : 1) +
       (tags.isEmpty ? 0 : 1) +
-      (foil == FoilFilter.any ? 0 : 1);
+      (foil == FoilFilter.any ? 0 : 1) +
+      (sets.isEmpty ? 0 : 1) +
+      (minEur == null && maxEur == null ? 0 : 1);
 
   CollectionQuery copyWith({
     String? text,
@@ -69,6 +81,10 @@ class CollectionQuery {
     Set<CardCondition>? conditions,
     Set<String>? tags,
     FoilFilter? foil,
+    Set<String>? sets,
+    double? minEur,
+    double? maxEur,
+    bool clearPrice = false,
   }) =>
       CollectionQuery(
         text: text ?? this.text,
@@ -80,10 +96,65 @@ class CollectionQuery {
         conditions: conditions ?? this.conditions,
         tags: tags ?? this.tags,
         foil: foil ?? this.foil,
+        sets: sets ?? this.sets,
+        minEur: clearPrice ? null : (minEur ?? this.minEur),
+        maxEur: clearPrice ? null : (maxEur ?? this.maxEur),
       );
+
+  /// Saved with folders as their auto-sort rule.
+  Map<String, dynamic> toJson() => {
+        if (text.isNotEmpty) 'text': text,
+        if (colours.isNotEmpty) 'colours': colours.toList(),
+        if (types.isNotEmpty) 'types': types.toList(),
+        if (rarities.isNotEmpty) 'rarities': rarities.toList(),
+        if (conditions.isNotEmpty) 'conditions': conditions.map((c) => c.code).toList(),
+        if (tags.isNotEmpty) 'tags': tags.toList(),
+        if (foil != FoilFilter.any) 'foil': foil.name,
+        if (sets.isNotEmpty) 'sets': sets.toList(),
+        'minEur': ?minEur,
+        'maxEur': ?maxEur,
+      };
+
+  factory CollectionQuery.fromJson(Map<String, dynamic> j) {
+    Set<String> strs(String k) => ((j[k] as List?) ?? const []).cast<String>().toSet();
+    return CollectionQuery(
+      text: j['text'] as String? ?? '',
+      colours: strs('colours'),
+      types: strs('types'),
+      rarities: strs('rarities'),
+      conditions: strs('conditions').map(CardCondition.parse).toSet(),
+      tags: strs('tags'),
+      foil: FoilFilter.values.where((f) => f.name == j['foil']).firstOrNull ?? FoilFilter.any,
+      sets: strs('sets'),
+      minEur: (j['minEur'] as num?)?.toDouble(),
+      maxEur: (j['maxEur'] as num?)?.toDouble(),
+    );
+  }
+
+  /// Short description, e.g. "Blue · Creature · £1–£5".
+  String describe({String Function(double eur)? money}) {
+    final m = money ?? (v) => '€${v.toStringAsFixed(2)}';
+    return [
+      if (text.isNotEmpty) '"$text"',
+      if (colours.isNotEmpty) colours.join('/'),
+      if (types.isNotEmpty) types.join('/'),
+      if (rarities.isNotEmpty) rarities.join('/'),
+      if (sets.isNotEmpty) sets.map((s) => s.toUpperCase()).join('/'),
+      if (minEur != null && maxEur != null) '${m(minEur!)}–${m(maxEur!)}'
+      else if (minEur != null) '≥ ${m(minEur!)}'
+      else if (maxEur != null) '≤ ${m(maxEur!)}',
+      if (foil == FoilFilter.foil) 'foil',
+      if (foil == FoilFilter.nonFoil) 'non-foil',
+      if (tags.isNotEmpty) tags.map((t) => '#$t').join(' '),
+      if (conditions.isNotEmpty) conditions.map((c) => c.code).join('/'),
+    ].join(' · ');
+  }
 
   /// Keeps sort and search, drops every filter.
   CollectionQuery cleared() => CollectionQuery(text: text, sortBy: sortBy, descending: descending);
+
+  /// A query with no filters, search or sort changes.
+  bool get isEmpty => filterCount == 0 && text.isEmpty;
 
   bool matches(CollectionEntry e) {
     final c = e.card;
@@ -114,6 +185,13 @@ class CollectionQuery {
     if (tags.isNotEmpty && !tags.any(e.tags.contains)) return false;
     if (foil == FoilFilter.foil && !e.foil) return false;
     if (foil == FoilFilter.nonFoil && e.foil) return false;
+    if (sets.isNotEmpty && !sets.contains(c.setCode.toLowerCase())) return false;
+    if (minEur != null || maxEur != null) {
+      final p = e.priceEur;
+      if (p == null) return false;
+      if (minEur != null && p < minEur!) return false;
+      if (maxEur != null && p > maxEur!) return false;
+    }
     return true;
   }
 

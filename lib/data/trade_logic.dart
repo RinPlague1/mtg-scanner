@@ -213,9 +213,13 @@ List<WantCard> computeWants(
     }
   }
   final wish = <String, int>{};
+  final wishPriority = <String, int>{};
+  final wishNote = <String, String>{};
   for (final w in wishlist) {
     names.putIfAbsent(w.key, () => w.name);
     wish.update(w.key, (v) => v + w.qty, ifAbsent: () => w.qty);
+    wishPriority[w.key] = w.priority.value;
+    wishNote[w.key] = w.details.isEmpty ? 'Wishlist' : 'Wishlist (${w.details})';
   }
 
   final out = <WantCard>[];
@@ -227,12 +231,14 @@ List<WantCard> computeWants(
     final missing = target - have;
     if (missing <= 0) continue;
     final builtGap = (built[key] ?? 0) > have;
-    final why = [...?reasons[key], if (wishTotal > 0) 'Wishlist'];
+    final why = [...?reasons[key], if (wishTotal > 0) wishNote[key] ?? 'Wishlist'];
+    final deckPriority = builtGap ? 3 : (deckTotal > have ? 2 : 0);
+    final wp = wishTotal > have ? (wishPriority[key] ?? 2) : 0;
     out.add(WantCard(
       key: key,
       name: names[key]!,
       qty: missing,
-      priority: builtGap ? 3 : 2,
+      priority: deckPriority > wp ? deckPriority : wp,
       reason: why.join(', '),
     ));
   }

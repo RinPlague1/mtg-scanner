@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'config.dart';
 import 'data/prices.dart';
 import 'services.dart';
+import 'ui/app_theme.dart';
 import 'ui/home_shell.dart';
 
 Future<void> main() async {
@@ -53,16 +54,13 @@ class BinderApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return ListenableBuilder(
+      listenable: services.settings,
+      builder: (context, _) => MaterialApp(
       title: AppConfig.appName,
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF7E57C2),
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-      ),
+      // Colour theme picked from the MTG colour combinations (Collection ⋮).
+      theme: buildAppTheme(services.settings.theme),
       // Android 15+ draws apps edge-to-edge, under the system Home / Back
       // buttons. Pad every screen (and bottom sheet) above them, and fill the
       // strip behind the buttons with the app's colour.
@@ -71,6 +69,7 @@ class BinderApp extends StatelessWidget {
         child: SafeArea(top: false, left: false, right: false, child: child!),
       ),
       home: HomeShell(services: services),
+      ),
     );
   }
 }

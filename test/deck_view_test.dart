@@ -95,6 +95,16 @@ void main() {
     expect(again.byKey('mana crypt')!.proxies, 1);
   });
 
+  test('proxy photo is saved with the deck and can be removed', () {
+    final d = Deck(name: 'P', cards: [const DeckCard('Mana Crypt', 1, proxies: 1)]);
+    d.setProxyImage('mana crypt', 'uid/deck/mana-crypt-1.png');
+    expect(Deck.fromJson(d.toJson()).byKey('mana crypt')!.proxyImage, 'uid/deck/mana-crypt-1.png');
+    d.setProxies('mana crypt', 0);
+    expect(d.byKey('mana crypt')!.proxyImage, isNotNull); // kept until removed
+    d.setProxyImage('mana crypt', null);
+    expect(Deck.fromJson(d.toJson()).byKey('mana crypt')!.proxyImage, isNull);
+  });
+
   test('saved deck cards keep their details', () {
     final c = sample().cards.first;
     final again = DeckCard.fromJson(c.toJson());

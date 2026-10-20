@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/collection.dart';
 import '../data/collection_query.dart';
 import '../data/models.dart';
+import '../data/prices.dart';
 import 'widgets.dart';
 
 const colourNames = {
@@ -15,20 +16,31 @@ const colourNames = {
   'M': 'Multicolour',
 };
 
-/// Filter sheet. Returns the new query, or null if dismissed.
-Future<CollectionQuery?> showFilterSheet(BuildContext context, CollectionQuery q, List<String> allTags) {
+/// Filter sheet. Returns the new query, or null if dismissed. [title] and
+/// [action] let it double as the folder auto-sort rule editor.
+Future<CollectionQuery?> showFilterSheet(BuildContext context, CollectionQuery q, List<String> allTags,
+    {String title = 'Filter', String action = 'Show cards', bool withText = false}) {
   return showModalBottomSheet<CollectionQuery>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (_) => _FilterSheet(initial: q, allTags: allTags),
+    builder: (_) => _FilterSheet(initial: q, allTags: allTags, title: title, action: action, withText: withText),
   );
 }
 
 class _FilterSheet extends StatefulWidget {
   final CollectionQuery initial;
   final List<String> allTags;
-  const _FilterSheet({required this.initial, required this.allTags});
+  final String title;
+  final String action;
+  final bool withText;
+  const _FilterSheet({
+    required this.initial,
+    required this.allTags,
+    required this.title,
+    required this.action,
+    required this.withText,
+  });
 
   @override
   State<_FilterSheet> createState() => _FilterSheetState();
@@ -36,6 +48,43 @@ class _FilterSheet extends StatefulWidget {
 
 class _FilterSheetState extends State<_FilterSheet> {
   late CollectionQuery q = widget.initial;
+  late final _text = TextEditingController(text: widget.initial.text);
+  late final _sets = TextEditingController(text: widget.initial.sets.map((s) => s.toUpperCase()).join(', '));
+  late final _min = TextEditingController(
+      text: widget.initial.minEur == null ? '' : Fx.instance.gbp(widget.initial.minEur!).toStringAsFixed(2));
+  late final _max = TextEditingController(
+      text: widget.initial.maxEur == null ? '' : Fx.instance.gbp(widget.initial.maxEur!).toStringAsFixed(2));
+
+  @override
+  void dispose() {
+    _text.dispose();
+    _sets.dispose();
+    _min.dispose();
+    _max.dispose();
+    super.dispose();
+  }
+
+  /// Text fields → query (prices typed in GBP, stored in EUR).
+  CollectionQuery _withFields() {
+    final rate = Fx.instance.eurToGbp;
+    double? eur(String s) {
+      final v = double.tryParse(s.replaceAll('£', '').trim());
+      return v == null || rate <= 0 ? null : v / rate;
+    }
+
+    final sets = _sets.text
+        .split(RegExp(r'[,\s]+'))
+        .map((x) => x.trim().toLowerCase())
+        .where((x) => x.isNotEmpty)
+        .toSet();
+    return q.copyWith(
+      text: widget.withText ? _text.text.trim() : null,
+      sets: sets,
+      minEur: eur(_min.text),
+      maxEur: eur(_max.text),
+      clearPrice: eur(_min.text) == null && eur(_max.text) == null,
+    );
+  }
 
   Set<T> _toggle<T>(Set<T> s, T v) => s.contains(v) ? ({...s}..remove(v)) : {...s, v};
 
@@ -57,7 +106,15 @@ class _FilterSheetState extends State<_FilterSheet> {
       builder: (context, scroll) => Column(children: [
         Expanded(
           child: ListView(controller: scroll, padding: const EdgeInsets.fromLTRB(20, 0, 20, 16), children: [
-            Text('Filter', style: Theme.of(context).textTheme.titleLarge),
+            Text(widget.title, style: Theme.of(context).textTheme.titleLarge),
+            if (widget.withText)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: TextField(
+                  controller: _text,
+                  decoration: const InputDecoration(labelText: 'Name, type or set contains', isDense: true),
+                ),
+              ),
             _section('Colour identity', [
               for (final c in colourLetters)
                 FilterChip(
@@ -103,6 +160,37 @@ class _FilterSheetState extends State<_FilterSheet> {
                   onSelected: (_) => setState(() => q = q.copyWith(foil: f)),
                 ),
             ]),
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Price per card', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 6),
+                Row(children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _min,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'From', prefixText: '£ ', isDense: true),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _max,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'To', prefixText: '£ ', isDense: true),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: 12),
+                Text('Sets', style: Theme.of(context).textTheme.titleSmall),
+                TextField(
+                  controller: _sets,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: const InputDecoration(hintText: 'Set codes, e.g. DFT, TDM', isDense: true),
+                ),
+              ]),
+            ),
             if (widget.allTags.isNotEmpty)
               _section('Tags', [
                 for (final t in widget.allTags)
@@ -121,11 +209,17 @@ class _FilterSheetState extends State<_FilterSheet> {
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
             child: Row(children: [
               TextButton(
-                onPressed: q.filterCount == 0 ? null : () => setState(() => q = q.cleared()),
+                onPressed: () => setState(() {
+                  q = q.cleared();
+                  _sets.clear();
+                  _min.clear();
+                  _max.clear();
+                  _text.clear();
+                }),
                 child: const Text('Clear all'),
               ),
               const Spacer(),
-              FilledButton(onPressed: () => Navigator.pop(context, q), child: const Text('Show cards')),
+              FilledButton(onPressed: () => Navigator.pop(context, _withFields()), child: Text(widget.action)),
             ]),
           ),
         ),

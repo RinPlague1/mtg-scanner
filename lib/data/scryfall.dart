@@ -262,6 +262,21 @@ class ScryfallClient {
     );
   }
 
+  Map<String, ({String name, int count})>? _sets;
+
+  /// Every set: code → name and number of cards (one request, cached).
+  Future<Map<String, ({String name, int count})>> sets() async {
+    final cached = _sets;
+    if (cached != null) return cached;
+    final j = await _get('/sets');
+    final out = <String, ({String name, int count})>{};
+    for (final s in ((j?['data'] as List?) ?? const [])) {
+      final m = s as Map;
+      out[(m['code'] as String).toLowerCase()] = (name: m['name'] as String? ?? '', count: (m['card_count'] as num?)?.toInt() ?? 0);
+    }
+    return _sets = out;
+  }
+
   /// Full Scryfall JSON for one printing (oracle text, legalities, links).
   Future<Map<String, dynamic>?> cardJson(String id) => _get('/cards/${Uri.encodeComponent(id)}');
 

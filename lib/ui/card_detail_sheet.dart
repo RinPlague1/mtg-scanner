@@ -8,6 +8,7 @@ import '../data/prices.dart';
 import '../data/scryfall.dart';
 import '../services.dart';
 import 'widgets.dart';
+import 'wishlist_screen.dart';
 
 /// Card details from Scryfall with actions: add to collection, wishlist or a
 /// deck, or open the card on scryfall.com.
@@ -54,8 +55,8 @@ class _CardDetailState extends State<_CardDetail> {
   }
 
   Future<void> _addToWishlist() async {
-    await widget.services.wishlist.add(c.name);
-    if (mounted) showMessage(context, 'Added ${c.name} to your wishlist');
+    await showWishEditor(context, widget.services, name: c.name, printing: c);
+    if (mounted) setState(() {});
   }
 
   Future<void> _addToDeck() async {
@@ -164,8 +165,8 @@ class _CardDetailState extends State<_CardDetail> {
             const SizedBox(height: 12),
             Wrap(spacing: 8, runSpacing: 8, children: [
               OutlinedButton.icon(
-                icon: const Icon(Icons.favorite_border),
-                label: const Text('Wishlist'),
+                icon: Icon(widget.services.wishlist.contains(c.name) ? Icons.favorite : Icons.favorite_border),
+                label: Text(widget.services.wishlist.contains(c.name) ? 'On wishlist' : 'Wishlist'),
                 onPressed: _addToWishlist,
               ),
               Row(mainAxisSize: MainAxisSize.min, children: [

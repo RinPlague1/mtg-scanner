@@ -72,10 +72,24 @@ class CardTextParser {
   }
 }
 
+/// Retro-frame (1997 style) reprints print "™ & © 2024 Wizards of the Coast
+/// 346": no set code, the collector number after "Coast".
+SetInfo? retroSetInfo(List<String> lines) {
+  final text = lines.join(' ');
+  final m = RegExp(r'(?:Coast|Coas|oast|C0ast)\W{0,3}([0-9OIl]{1,4}[a-z]?)\b', caseSensitive: false).firstMatch(text);
+  if (m == null) return null;
+  final raw = m.group(1)!.replaceAll('O', '0').replaceAll(RegExp(r'[Il]'), '1');
+  if (!RegExp(r'^\d').hasMatch(raw)) return null;
+  final year = RegExp(r'\b(19[89]\d|20[0-4]\d)\b').firstMatch(text)?.group(1);
+  return SetInfo(null, raw.replaceFirst(RegExp(r'^0+(?=\d)'), ''), year: year == null ? null : int.parse(year));
+}
+
 class SetInfo {
   final String? setCode; // lower-case Scryfall set code
   final String? collectorNumber;
-  const SetInfo(this.setCode, this.collectorNumber);
+  /// Copyright year on retro-frame cards (helps pick between reprints).
+  final int? year;
+  const SetInfo(this.setCode, this.collectorNumber, {this.year});
   bool get complete => setCode != null && collectorNumber != null;
 
   @override

@@ -279,6 +279,45 @@ class Backend extends ChangeNotifier {
     return rows;
   }
 
+  // ───────── Proxy images (Supabase Storage) ─────────
+
+  static const proxyBucket = 'proxy-images';
+  final _signedUrls = <String, (String, DateTime)>{};
+
+  /// Uploads a proxy photo (PNG) and returns its storage path. Files live
+  /// under your user id; you and your friends can read them.
+  Future<String> uploadProxyImage(String deckId, String cardKey, Uint8List png) async {
+    final id = uid;
+    if (id == null) throw const UserError('Sign in (Friends tab) to upload proxy images');
+    final safe = cardKey.replaceAll(RegExp(r'[^a-z0-9]+'), '-');
+    final path = '$id/$deckId/$safe-${DateTime.now().millisecondsSinceEpoch}.png';
+    await _db.storage
+        .from(proxyBucket)
+        .uploadBinary(path, png, fileOptions: const FileOptions(contentType: 'image/png', upsert: true));
+    return path;
+  }
+
+  Future<void> deleteProxyImage(String path) async {
+    _signedUrls.remove(path);
+    await _db.storage.from(proxyBucket).remove([path]);
+  }
+
+  /// An already-made link, if there's a fresh one (avoids flicker on rebuild).
+  String? cachedProxyUrl(String path) {
+    final c = _signedUrls[path];
+    return c != null && c.$2.isAfter(DateTime.now()) ? c.$1 : null;
+  }
+
+  /// A temporary link to a proxy photo (null when offline or not allowed).
+  Future<String?> proxyImageUrl(String path) async {
+    if (!signedIn) return null;
+    final cached = _signedUrls[path];
+    if (cached != null && cached.$2.isAfter(DateTime.now())) return cached.$1;
+    final url = await _db.storage.from(proxyBucket).createSignedUrl(path, 3600);
+    _signedUrls[path] = (url, DateTime.now().add(const Duration(minutes: 50)));
+    return url;
+  }
+
   /// A friend's decks that they've shared (raw deck JSON).
   Future<List<Map<String, dynamic>>> friendDecks(String id) async {
     final rows = await _db.from('decks').select('data').eq('user_id', id);

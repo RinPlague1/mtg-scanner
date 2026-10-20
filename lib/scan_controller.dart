@@ -243,9 +243,18 @@ class ScanController extends ChangeNotifier {
     final setLines = await _ocr(a.setLine, 'set');
     final candidates = CardTextParser.nameCandidates(nameLines);
     var setInfo = CardTextParser.setInfo(setLines);
+    var allSetLines = setLines;
+    // No set code bottom-left: maybe a retro (1997-style) frame, which prints
+    // "™ & © 2024 Wizards of the Coast 346" along the bottom instead.
+    if (setInfo?.setCode == null && candidates.isNotEmpty) {
+      final retroLines = await _ocr(a.retroLine, 'retro');
+      final retro = retroSetInfo(retroLines);
+      if (retro != null) setInfo = retro;
+      allSetLines = [...setLines, ...retroLines];
+    }
     lastRawName = candidates.isEmpty ? null : candidates.first;
     lastNameLines = nameLines;
-    lastSetLines = setLines;
+    lastSetLines = allSetLines;
     lastSetInfo = setInfo;
     framesAnalysed++;
 
@@ -588,6 +597,23 @@ class ScanController extends ChangeNotifier {
 
       // No usable code: the title decides; any set code seen narrows the printing.
       lookupStep = 'title "${r.name}"';
+      // A collector number without a set code (retro frames print only the
+      // number): pick the printing of this card with that number.
+      if (s != null && s.setCode == null && s.collectorNumber != null && hasTitle) {
+        lookupStep = 'title "${r.name}" #${s.collectorNumber}';
+        final named = await scryfall.named(r.name, fuzzy: _index == null);
+        if (named != null) {
+          final all = await scryfall.printings(named.name);
+          final cn = s.collectorNumber!.toLowerCase();
+          final matches = all.where((p) => p.collectorNumber.toLowerCase().replaceFirst(RegExp(r'^0+(?=\d)'), '') == cn).toList();
+          if (matches.isNotEmpty) {
+            _found(matches.first, matches.length == 1, gen);
+            return;
+          }
+          _found(named, false, gen);
+          return;
+        }
+      }
       CardPrint? card;
       if (_index != null) {
         card = await scryfall.named(r.name, set: s?.setCode);

@@ -32,6 +32,16 @@ class AppSettings extends ChangeNotifier {
   /// Scanner: show the raw text it reads, for troubleshooting.
   bool showScanDebug = false;
 
+  /// Collection grid: show each card's price on its picture.
+  bool showPriceOnCards = false;
+
+  /// App colour theme id (an MTG colour combination, e.g. "izzet").
+  String theme = 'default';
+
+  /// Collection value at the last price refresh (EUR), for "change since".
+  double? lastValueEur;
+  DateTime? lastValueAt;
+
   final JsonFile _file = JsonFile('settings.json');
 
   Future<void> load() async {
@@ -42,6 +52,10 @@ class AppSettings extends ChangeNotifier {
       sortBy = SortBy.values.firstWhere((s) => s.name == data['sortBy'], orElse: () => SortBy.added);
       sortDescending = data['sortDescending'] as bool? ?? true;
       showScanDebug = data['showScanDebug'] as bool? ?? false;
+      showPriceOnCards = data['showPriceOnCards'] as bool? ?? false;
+      theme = data['theme'] as String? ?? 'default';
+      lastValueEur = (data['lastValueEur'] as num?)?.toDouble();
+      lastValueAt = DateTime.tryParse(data['lastValueAt'] as String? ?? '');
     }
     notifyListeners();
   }
@@ -52,7 +66,30 @@ class AppSettings extends ChangeNotifier {
         'sortBy': sortBy.name,
         'sortDescending': sortDescending,
         'showScanDebug': showScanDebug,
+        'showPriceOnCards': showPriceOnCards,
+        'theme': theme,
+        if (lastValueEur != null) 'lastValueEur': lastValueEur,
+        if (lastValueAt != null) 'lastValueAt': lastValueAt!.toIso8601String(),
       });
+
+  Future<void> setTheme(String id) async {
+    theme = id;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setShowPriceOnCards(bool v) async {
+    showPriceOnCards = v;
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setValueSnapshot(double eur) async {
+    lastValueEur = eur;
+    lastValueAt = DateTime.now();
+    notifyListeners();
+    await _save();
+  }
 
   Future<void> setShowScanDebug(bool v) async {
     showScanDebug = v;

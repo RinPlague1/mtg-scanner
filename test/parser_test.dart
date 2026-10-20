@@ -52,4 +52,19 @@ void main() {
     test('accents folded', () => expect(idx.match('Lim-Dul the Necromancer')?.name, 'Lim-Dûl the Necromancer'));
     test('rejects noise', () => expect(idx.match('xqzv kkrp'), isNull));
   });
+
+  group('retro frame bottom line', () {
+    test('number after "Wizards of the Coast", with year', () {
+      final r = retroSetInfo(['Illus. Chase Stone', 'TM & © 2024 Wizards of the Coast 346']);
+      expect(r?.setCode, isNull);
+      expect(r?.collectorNumber, '346');
+      expect(r?.year, 2024);
+    });
+    test('OCR slips: O for 0, run together', () {
+      expect(retroSetInfo(['& © 2024 Wizards of the Coast3O5'])?.collectorNumber, '305');
+    });
+    test('no number, no result', () {
+      expect(retroSetInfo(['Illus. Someone', '© 1997 Wizards of the Coast']), isNull);
+    });
+  });
 }

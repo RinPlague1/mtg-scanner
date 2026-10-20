@@ -8,12 +8,15 @@ import '../data/prices.dart';
 import '../data/scryfall.dart';
 import '../services.dart';
 import '../social/backend.dart';
+import 'app_theme.dart';
+import 'collection_insights_screen.dart';
 import 'collection_tools.dart';
 import 'import_screen.dart';
 import 'printing_picker.dart';
 import 'scan_review_screen.dart';
 import 'share_showcase.dart';
 import 'widgets.dart';
+import 'wishlist_screen.dart';
 
 class CollectionScreen extends StatefulWidget {
   final AppServices services;
@@ -30,6 +33,11 @@ class _CollectionScreenState extends State<CollectionScreen> {
   /// Multi-select: non-empty = selection mode.
   final Set<CollectionEntry> _selected = {};
   bool _refreshing = false;
+
+  /// Folder shown on each tab: null = all, [_unsorted] = cards in no folder,
+  /// otherwise "binderId/folder name".
+  final Map<int, String?> _folderOnTab = {};
+  static const _unsorted = '\u0000unsorted';
 
   CollectionStore get _store => widget.services.collection;
   bool get _selecting => _selected.isNotEmpty;
@@ -82,6 +90,83 @@ class _CollectionScreenState extends State<CollectionScreen> {
   Future<void> _bulkTag() async {
     await showTagDialog(context, _store, _selected.toList());
     if (mounted) setState(_selected.clear);
+  }
+
+  Future<void> _bulkFoil(bool foil) async {
+    await _store.setFoilAll(_selected.toList(), foil);
+    if (mounted) setState(_selected.clear);
+  }
+
+  Future<void> _bulkFolder() async {
+    final binders = _selected.map((e) => e.binder).toSet();
+    final choice = await _pickFolder(binders.length == 1 ? binders.first : null);
+    if (choice == null || !mounted) return;
+    final (binder, name) = choice;
+    // Folders belong to a binder; cards in other binders stay where they are.
+    final fits = _selected.where((e) => binder == null || e.binder == binder).toList();
+    await _store.setFolderAll(fits, name);
+    if (!mounted) return;
+    final skipped = _selected.length - fits.length;
+    setState(_selected.clear);
+    showMessage(context, [
+      name == null ? 'Moved to Unsorted' : 'Moved to $name',
+      if (skipped > 0) '$skipped in another binder left as they were',
+    ].join('. '));
+  }
+
+  Future<void> _bulkExport() async {
+    final file = await _store.exportCsv(_selected.toList(), 'selected-cards');
+    await SharePlus.instance.share(ShareParams(
+      files: [XFile(file.path, mimeType: 'text/csv')],
+      subject: 'MTG cards',
+      text: 'Moxfield-format CSV',
+    ));
+  }
+
+  /// Folder chooser. Returns (binder, folder name) with name null for
+  /// Unsorted; null if cancelled.
+  Future<(Binder?, String?)?> _pickFolder(Binder? binder) async {
+    final folders = _foldersFor(binder);
+    return showModalBottomSheet<(Binder?, String?)>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: ListView(shrinkWrap: true, children: [
+          ListTile(
+            leading: const Icon(Icons.folder_off_outlined),
+            title: const Text('Unsorted (no folder)'),
+            onTap: () => Navigator.pop(ctx, (null, null)),
+          ),
+          for (final f in folders)
+            ListTile(
+              leading: const Icon(Icons.folder_outlined),
+              title: Text(f.name),
+              subtitle: binder == null ? Text(f.binder.label) : null,
+              onTap: () => Navigator.pop(ctx, (f.binder, f.name)),
+            ),
+          ListTile(
+            leading: const Icon(Icons.create_new_folder_outlined),
+            title: const Text('New folder…'),
+            onTap: () async {
+              final f = await showFolderEditor(context, widget.services, binder: binder ?? Binder.collection);
+              if (ctx.mounted) Navigator.pop(ctx, f == null ? null : (f.binder, f.name));
+            },
+          ),
+        ]),
+      ),
+    );
+  }
+
+  /// Defined folders plus any folder names cards carry (e.g. restored from
+  /// a backup) for [binder], or every binder when null.
+  List<CollectionFolder> _foldersFor(Binder? binder) {
+    final out = <CollectionFolder>[...binder == null ? _store.folders : _store.foldersIn(binder)];
+    for (final e in _store.entries) {
+      final name = e.folder;
+      if (name == null || (binder != null && e.binder != binder)) continue;
+      if (!out.any((f) => f.binder == e.binder && f.name == name)) out.add(CollectionFolder(name: name, binder: e.binder));
+    }
+    return out;
   }
 
   Future<void> _bulkDelete() async {
@@ -138,15 +223,23 @@ class _CollectionScreenState extends State<CollectionScreen> {
             for (final b in Binder.values) PopupMenuItem(value: b, child: Text('Move to ${b.label}')),
           ],
         ),
+        IconButton(tooltip: 'Move to folder', icon: const Icon(Icons.folder_outlined), onPressed: _bulkFolder),
         IconButton(tooltip: 'Tags', icon: const Icon(Icons.label_outline), onPressed: _bulkTag),
         PopupMenuButton<String>(
           onSelected: (v) {
             if (v == 'delete') _bulkDelete();
+            if (v == 'foil') _bulkFoil(true);
+            if (v == 'nonfoil') _bulkFoil(false);
+            if (v == 'export') _bulkExport();
             final c = CardCondition.values.where((c) => c.code == v).firstOrNull;
             if (c != null) _bulkCondition(c);
           },
           itemBuilder: (_) => [
             for (final c in CardCondition.values) PopupMenuItem(value: c.code, child: Text('Condition: ${c.label}')),
+            const PopupMenuDivider(),
+            const PopupMenuItem(value: 'foil', child: Text('Mark as foil')),
+            const PopupMenuItem(value: 'nonfoil', child: Text('Mark as non-foil')),
+            const PopupMenuItem(value: 'export', child: Text('Export selected (CSV)')),
             const PopupMenuDivider(),
             const PopupMenuItem(value: 'delete', child: Text('Remove from collection')),
           ],
@@ -227,9 +320,32 @@ class _CollectionScreenState extends State<CollectionScreen> {
                 _export();
               case 'share':
                 shareShowcase(context, widget.services);
+              case 'wishlist':
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => WishlistScreen(services: widget.services)));
+              case 'insights':
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => CollectionInsightsScreen(services: widget.services),
+                ));
+              case 'prices':
+                st.setShowPriceOnCards(!st.showPriceOnCards);
+              case 'theme':
+                Navigator.of(context).push(MaterialPageRoute(builder: (_) => ThemePickerScreen(settings: st)));
             }
           },
           itemBuilder: (_) => [
+            PopupMenuItem(
+              value: 'wishlist',
+              child: Row(children: [
+                const Text('Wishlist'),
+                const SizedBox(width: 8),
+                if (widget.services.wishlist.alerts(Fx.instance.gbp).isNotEmpty)
+                  Badge(label: Text('${widget.services.wishlist.alerts(Fx.instance.gbp).length}')),
+              ]),
+            ),
+            const PopupMenuItem(value: 'insights', child: Text('Value, duplicates & sets')),
+            CheckedPopupMenuItem(value: 'prices', checked: st.showPriceOnCards, child: const Text('Prices on cards')),
+            PopupMenuItem(value: 'theme', child: Text('Colour theme · ${themeById(st.theme).name}')),
+            const PopupMenuDivider(),
             const PopupMenuItem(value: 'import', child: Text('Import TXT / CSV')),
             const PopupMenuItem(value: 'tags', child: Text('Manage tags')),
             PopupMenuItem(
@@ -260,7 +376,7 @@ class _CollectionScreenState extends State<CollectionScreen> {
     return DefaultTabController(
       length: 3,
       child: ListenableBuilder(
-        listenable: Listenable.merge([_store, Fx.instance, s.buffer, s.settings]),
+        listenable: Listenable.merge([_store, Fx.instance, s.buffer, s.settings, s.wishlist]),
         builder: (context, _) {
           // Drop selected entries that no longer exist (moved or removed).
           if (_selected.isNotEmpty) {
@@ -310,9 +426,9 @@ class _CollectionScreenState extends State<CollectionScreen> {
                 if (q.filterCount > 0 || q.text.isNotEmpty) _activeFilters(q),
                 Expanded(
                   child: TabBarView(children: [
-                    _view(all, null),
-                    _view(all.where((e) => e.binder == Binder.showcase).toList(), Binder.showcase),
-                    _view(all.where((e) => e.binder == Binder.trade).toList(), Binder.trade),
+                    _view(all, null, 0),
+                    _view(all.where((e) => e.binder == Binder.showcase).toList(), Binder.showcase, 1),
+                    _view(all.where((e) => e.binder == Binder.trade).toList(), Binder.trade, 2),
                   ]),
                 ),
               ]),
@@ -340,6 +456,11 @@ class _CollectionScreenState extends State<CollectionScreen> {
     if (q.foil != FoilFilter.any) {
       chip(q.foil == FoilFilter.foil ? 'Foil' : 'Non-foil', _filters.copyWith(foil: FoilFilter.any));
     }
+    if (q.sets.isNotEmpty) chip(q.sets.map((x) => x.toUpperCase()).join(' / '), _filters.copyWith(sets: {}));
+    if (q.minEur != null || q.maxEur != null) {
+      String m(double? v) => v == null ? '' : '£${Fx.instance.gbp(v).toStringAsFixed(2)}';
+      chip('${m(q.minEur)}–${m(q.maxEur)}', _filters.copyWith(clearPrice: true));
+    }
     return SizedBox(
       height: 48,
       child: ListView(
@@ -356,10 +477,135 @@ class _CollectionScreenState extends State<CollectionScreen> {
     );
   }
 
-  Widget _view(List<CollectionEntry> entries, Binder? binder) {
+  Widget _view(List<CollectionEntry> inBinder, Binder? binder, int tab) {
+    final folderSel = _folderOnTab[tab];
+    final entries = folderSel == null
+        ? inBinder
+        : folderSel == _unsorted
+            ? inBinder.where((e) => e.folder == null).toList()
+            : inBinder.where((e) => '${e.binder.id}/${e.folder}' == folderSel).toList();
+    final bar = _folderBar(inBinder, binder, tab);
     if (entries.isEmpty) {
-      final filtered = _query.filterCount > 0 || _query.text.isNotEmpty;
-      if (filtered) return const EmptyState(icon: Icons.filter_list_off, title: 'No cards match these filters');
+      return Column(children: [bar, Expanded(child: _emptyView(binder, folderSel != null))]);
+    }
+    return Column(children: [bar, Expanded(child: _entriesView(entries, binder))]);
+  }
+
+  /// Folder chips: All · Unsorted · each folder · new folder.
+  Widget _folderBar(List<CollectionEntry> inBinder, Binder? binder, int tab) {
+    final folders = _foldersFor(binder);
+    final sel = _folderOnTab[tab];
+    int count(bool Function(CollectionEntry) t) => inBinder.where(t).fold(0, (n, e) => n + e.quantity);
+    if (folders.isEmpty) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Padding(
+          padding: const EdgeInsets.only(left: 8),
+          child: TextButton.icon(
+            icon: const Icon(Icons.create_new_folder_outlined, size: 18),
+            label: const Text('New folder'),
+            onPressed: () => showFolderEditor(context, widget.services, binder: binder ?? Binder.collection),
+          ),
+        ),
+      );
+    }
+    return SizedBox(
+      height: 48,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: ChoiceChip(
+              label: const Text('All'),
+              selected: sel == null,
+              onSelected: (_) => setState(() => _folderOnTab[tab] = null),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: ChoiceChip(
+              label: Text('Unsorted ${count((e) => e.folder == null)}'),
+              selected: sel == _unsorted,
+              onSelected: (_) => setState(() => _folderOnTab[tab] = _unsorted),
+            ),
+          ),
+          for (final f in folders)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: GestureDetector(
+                onLongPress: () => _folderActions(f),
+                child: ChoiceChip(
+                  avatar: Icon(f.autoSort ? Icons.auto_awesome : Icons.folder_outlined, size: 16),
+                  label: Text('${f.name} ${count((e) => e.binder == f.binder && e.folder == f.name)}'),
+                  selected: sel == '${f.binder.id}/${f.name}',
+                  onSelected: (_) => setState(() => _folderOnTab[tab] = '${f.binder.id}/${f.name}'),
+                ),
+              ),
+            ),
+          ActionChip(
+            avatar: const Icon(Icons.add, size: 16),
+            label: const Text('Folder'),
+            onPressed: () => showFolderEditor(context, widget.services, binder: binder ?? Binder.collection),
+          ),
+          if (sel != null && sel != _unsorted)
+            IconButton(
+              tooltip: 'Folder options',
+              icon: const Icon(Icons.more_horiz),
+              onPressed: () {
+                final f = folders.where((x) => '${x.binder.id}/${x.name}' == sel).firstOrNull;
+                if (f != null) _folderActions(f);
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _folderActions(CollectionFolder f) async {
+    final v = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(title: Text(f.name, style: Theme.of(ctx).textTheme.titleMedium), subtitle: Text(f.binder.label)),
+          ListTile(leading: const Icon(Icons.edit_outlined), title: const Text('Edit folder & auto-sort rule'), onTap: () => Navigator.pop(ctx, 'edit')),
+          if (f.rule != null)
+            ListTile(leading: const Icon(Icons.auto_awesome), title: const Text('Sort matching cards in now'), onTap: () => Navigator.pop(ctx, 'sort')),
+          ListTile(leading: const Icon(Icons.ios_share), title: const Text('Export folder (CSV)'), onTap: () => Navigator.pop(ctx, 'export')),
+          ListTile(leading: const Icon(Icons.delete_outline), title: const Text('Delete folder (cards go to Unsorted)'), onTap: () => Navigator.pop(ctx, 'delete')),
+        ]),
+      ),
+    );
+    if (!mounted || v == null) return;
+    switch (v) {
+      case 'edit':
+        await showFolderEditor(context, widget.services, binder: f.binder, existing: f);
+      case 'sort':
+        final n = await _store.sortIntoFolder(f);
+        if (mounted) showMessage(context, 'Moved $n cards into ${f.name}');
+      case 'export':
+        final cards = _store.entries.where((e) => e.binder == f.binder && e.folder == f.name).toList();
+        final file = await _store.exportCsv(cards, f.name);
+        await SharePlus.instance.share(ShareParams(files: [XFile(file.path, mimeType: 'text/csv')], subject: f.name));
+      case 'delete':
+        await _store.deleteFolder(f);
+        setState(() => _folderOnTab.updateAll((_, x) => x == '${f.binder.id}/${f.name}' ? null : x));
+    }
+  }
+
+  Widget _emptyView(Binder? binder, bool inFolder) {
+    final filtered = _query.filterCount > 0 || _query.text.isNotEmpty;
+    if (filtered) return const EmptyState(icon: Icons.filter_list_off, title: 'No cards match these filters');
+    if (inFolder) {
+      return const EmptyState(
+        icon: Icons.folder_open,
+        title: 'This folder is empty',
+        body: 'Select cards (long-press) and use the folder button, or set an auto-sort rule in the folder options.',
+      );
+    }
+    {
       return EmptyState(
         icon: binder == Binder.showcase ? Icons.auto_awesome : Icons.collections_bookmark_outlined,
         title: switch (binder) {
@@ -376,6 +622,9 @@ class _CollectionScreenState extends State<CollectionScreen> {
         },
       );
     }
+  }
+
+  Widget _entriesView(List<CollectionEntry> entries, Binder? binder) {
     final count = entries.fold(0, (s, e) => s + e.quantity);
     final value = entries.fold<double>(0.0, (s, e) => s + (e.priceEur ?? 0) * e.quantity);
     final header = Padding(
@@ -418,6 +667,7 @@ class _CollectionScreenState extends State<CollectionScreen> {
           if (e.foil) 'foil',
           if (e.condition != CardCondition.nm) e.condition.code,
           if (binder == null && e.binder != Binder.collection) e.binder.label,
+          if (e.folder != null) '📁 ${e.folder}',
           if (e.priceEur != null) gbp(e.priceEur),
         ];
         return ListTile(
@@ -498,6 +748,16 @@ class _CollectionScreenState extends State<CollectionScreen> {
                   ),
                 ),
               ),
+            if (widget.services.settings.showPriceOnCards && e.priceEur != null)
+              Positioned(
+                left: 4,
+                bottom: 4,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(10)),
+                  child: Text(gbp(e.priceEur), style: const TextStyle(color: Colors.white, fontSize: 12)),
+                ),
+              ),
             if (selected)
               Positioned.fill(
                 child: Container(
@@ -549,6 +809,52 @@ class _EntrySheetState extends State<_EntrySheet> {
     await _apply(picked, foil);
   }
 
+  Future<void> _chooseFolder(CollectionEntry e) async {
+    final store = widget.services.collection;
+    final names = <String>{
+      for (final f in store.foldersIn(e.binder)) f.name,
+      for (final x in store.entries)
+        if (x.binder == e.binder && x.folder != null) x.folder!,
+    }.toList()
+      ..sort();
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: ListView(shrinkWrap: true, children: [
+          ListTile(
+            leading: const Icon(Icons.folder_off_outlined),
+            title: const Text('No folder'),
+            onTap: () => Navigator.pop(ctx, ''),
+          ),
+          for (final n in names)
+            ListTile(
+              leading: const Icon(Icons.folder_outlined),
+              title: Text(n),
+              selected: n == e.folder,
+              onTap: () => Navigator.pop(ctx, n),
+            ),
+          ListTile(
+            leading: const Icon(Icons.create_new_folder_outlined),
+            title: const Text('New folder…'),
+            onTap: () async {
+              final f = await showFolderEditor(ctx, widget.services, binder: e.binder);
+              if (ctx.mounted) Navigator.pop(ctx, f?.name);
+            },
+          ),
+        ]),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    final name = picked.isEmpty ? null : picked;
+    await store.setFolderAll([e], name);
+    // The entry was replaced; show the one now holding these copies.
+    final now = store.entries
+        .where((x) => x.card.id == e.card.id && x.foil == e.foil && x.binder == e.binder && x.condition == e.condition && x.folder == name)
+        .firstOrNull;
+    if (mounted && now != null) setState(() => _entry = now);
+  }
+
   Future<void> _apply(CardPrint card, bool foil) async {
     final before = _entry.quantity;
     final result = await widget.services.collection.changePrinting(_entry, card, foil: foil);
@@ -581,7 +887,7 @@ class _EntrySheetState extends State<_EntrySheet> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(e.card.name, style: Theme.of(context).textTheme.titleLarge),
                 Text('${e.card.setName} (${e.card.setCode.toUpperCase()})${e.foil ? ' · foil' : ''}'),
-                Text('In: ${e.binder.label} · ${e.condition.label}'),
+                Text('In: ${e.binder.label}${e.folder != null ? ' › ${e.folder}' : ''} · ${e.condition.label}'),
                 if (e.priceEur != null) Text('${gbp(e.priceEur)} each (Cardmarket)'),
                 if (decksUsing.isNotEmpty) ...[
                   const SizedBox(height: 6),
@@ -651,6 +957,12 @@ class _EntrySheetState extends State<_EntrySheet> {
                 onPressed: _moveQty < e.quantity ? () => setState(() => _moveQty++) : null,
               ),
             ]),
+          Row(children: [
+            const Icon(Icons.folder_outlined, size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text(e.folder == null ? 'No folder' : 'Folder: ${e.folder}')),
+            TextButton(onPressed: () => _chooseFolder(e), child: const Text('Change')),
+          ]),
           const Text('Move to binder'),
           const SizedBox(height: 6),
           Wrap(spacing: 8, children: [
@@ -709,6 +1021,141 @@ class _EntrySheetState extends State<_EntrySheet> {
               await store.setQuantity(e, 0);
               if (context.mounted) Navigator.pop(context);
             },
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Create or edit a folder (name and optional auto-sort rule). Returns the
+/// saved folder, or null if cancelled.
+Future<CollectionFolder?> showFolderEditor(BuildContext context, AppServices services,
+    {required Binder binder, CollectionFolder? existing}) {
+  return showModalBottomSheet<CollectionFolder>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (_) => _FolderEditor(services: services, binder: binder, existing: existing),
+  );
+}
+
+class _FolderEditor extends StatefulWidget {
+  final AppServices services;
+  final Binder binder;
+  final CollectionFolder? existing;
+  const _FolderEditor({required this.services, required this.binder, this.existing});
+
+  @override
+  State<_FolderEditor> createState() => _FolderEditorState();
+}
+
+class _FolderEditorState extends State<_FolderEditor> {
+  late final _name = TextEditingController(text: widget.existing?.name ?? '');
+  late Binder _binder = widget.existing?.binder ?? widget.binder;
+  late CollectionQuery? _rule = widget.existing?.rule;
+  late bool _auto = widget.existing?.autoSort ?? false;
+  bool _sortNow = true;
+
+  CollectionStore get _store => widget.services.collection;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _editRule() async {
+    final q = await showFilterSheet(context, _rule ?? const CollectionQuery(), _store.allTags,
+        title: 'Cards that go in this folder', action: 'Use these', withText: true);
+    if (q != null) setState(() => _rule = q.isEmpty ? null : q);
+  }
+
+  Future<void> _save() async {
+    final name = _name.text.trim();
+    if (name.isEmpty) return;
+    final taken = _store.folderNamed(_binder, name);
+    if (taken != null && taken != widget.existing) {
+      showMessage(context, 'There\'s already a folder called $name in ${_binder.label}');
+      return;
+    }
+    final f = CollectionFolder(name: name, binder: _binder, rule: _rule, autoSort: _rule != null && _auto);
+    await _store.saveFolder(f, oldName: widget.existing?.name);
+    var moved = 0;
+    if (_rule != null && _sortNow) moved = await _store.sortIntoFolder(f);
+    if (!mounted) return;
+    if (moved > 0) showMessage(context, 'Moved $moved cards into $name');
+    Navigator.pop(context, f);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final matching = _rule == null
+        ? 0
+        : _store.entries
+            .where((e) => e.binder == _binder && e.folder == null && _rule!.matches(e))
+            .fold(0, (n, e) => n + e.quantity);
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(20, 0, 20, 16 + MediaQuery.of(context).viewInsets.bottom),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(widget.existing == null ? 'New folder' : 'Edit folder', style: theme.textTheme.titleLarge),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _name,
+            autofocus: widget.existing == null,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(labelText: 'Name', hintText: 'e.g. Sharks, Bulk rares, Box 3', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 12),
+          const Text('In binder'),
+          const SizedBox(height: 6),
+          Wrap(spacing: 6, children: [
+            for (final b in Binder.values)
+              ChoiceChip(
+                label: Text(b.label),
+                selected: _binder == b,
+                onSelected: widget.existing == null ? (_) => setState(() => _binder = b) : null,
+              ),
+          ]),
+          const SizedBox(height: 16),
+          Text('Auto-sort', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 4),
+          Text(
+            _rule == null
+                ? 'Optional: choose which cards belong here (colour, type, rarity, set, price, foil, tags, name).'
+                : _rule!.describe(money: (v) => gbp(v)),
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 6),
+          Wrap(spacing: 8, children: [
+            OutlinedButton.icon(
+              icon: const Icon(Icons.tune),
+              label: Text(_rule == null ? 'Set rule' : 'Change rule'),
+              onPressed: _editRule,
+            ),
+            if (_rule != null) TextButton(onPressed: () => setState(() => _rule = null), child: const Text('No rule')),
+          ]),
+          if (_rule != null) ...[
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _sortNow,
+              onChanged: (v) => setState(() => _sortNow = v ?? false),
+              title: Text('Move matching unsorted cards in now ($matching)'),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _auto,
+              onChanged: (v) => setState(() => _auto = v),
+              title: const Text('Sort new cards automatically'),
+              subtitle: const Text('Scanned or imported cards that match go straight in'),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: FilledButton(onPressed: _save, child: Text(widget.existing == null ? 'Create folder' : 'Save')),
           ),
         ]),
       ),

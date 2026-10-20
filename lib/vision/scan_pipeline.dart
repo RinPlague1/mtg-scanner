@@ -11,6 +11,9 @@ class FrameAnalysis {
   final int sidesFound;
   final OcrCrop name;
   final OcrCrop setLine;
+
+  /// Bottom-centre line of retro-frame cards (collector number only).
+  final OcrCrop retroLine;
   final double nameGlare;
   final double cardBrightness; // 0..255 mean luma of the title crop
   final int elapsedMs;
@@ -20,6 +23,7 @@ class FrameAnalysis {
     required this.sidesFound,
     required this.name,
     required this.setLine,
+    required this.retroLine,
     required this.nameGlare,
     required this.cardBrightness,
     required this.elapsedMs,
@@ -50,6 +54,7 @@ FrameAnalysis analyseFrame(YuvFrame frame, {int analysisWidth = 360}) {
 
   final nameCrop = frame.cropRegion(quadFull, CardRegions.name, 640);
   final setCrop = frame.cropRegion(quadFull, CardRegions.setLine, 720);
+  final retroCrop = frame.cropRegion(quadFull, CardRegions.retroLine, 900);
 
   final nameImg = nameCrop.glareFraction > 0.015
       ? _stretch(_flatten(nameCrop.image, 14))
@@ -62,6 +67,7 @@ FrameAnalysis analyseFrame(YuvFrame frame, {int analysisWidth = 360}) {
     sidesFound: refined.sidesFound,
     name: _toNv21(nameImg),
     setLine: _toNv21(setImg),
+    retroLine: _toNv21(_stretch(retroCrop.image)),
     nameGlare: nameCrop.glareFraction,
     cardBrightness: nameCrop.meanLuma,
     elapsedMs: sw.elapsedMilliseconds,

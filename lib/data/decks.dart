@@ -19,19 +19,24 @@ class DeckCard {
   /// wants, and aren't in your collection.
   final int proxies;
 
-  const DeckCard(this.name, this.qty, {this.commander = false, this.card, this.proxies = 0});
+  /// Your own photo/scan of the proxy (path in Supabase Storage), shown
+  /// instead of the official image, also to friends.
+  final String? proxyImage;
+
+  const DeckCard(this.name, this.qty, {this.commander = false, this.card, this.proxies = 0, this.proxyImage});
 
   String get key => nameKey(name);
 
   /// Real copies this slot needs from your collection.
   int get realNeeded => qty - proxies.clamp(0, qty);
 
-  DeckCard copyWith({int? qty, bool? commander, CardPrint? card, int? proxies}) {
+  DeckCard copyWith({int? qty, bool? commander, CardPrint? card, int? proxies, String? proxyImage, bool clearProxyImage = false}) {
     final q = qty ?? this.qty;
     return DeckCard(name, q,
         commander: commander ?? this.commander,
         card: card ?? this.card,
-        proxies: (proxies ?? this.proxies).clamp(0, q));
+        proxies: (proxies ?? this.proxies).clamp(0, q),
+        proxyImage: clearProxyImage ? null : (proxyImage ?? this.proxyImage));
   }
 
   Map<String, dynamic> toJson() => {
@@ -39,6 +44,7 @@ class DeckCard {
         'qty': qty,
         if (commander) 'commander': true,
         if (proxies > 0) 'proxies': proxies,
+        if (proxyImage != null) 'proxy_image': proxyImage,
         if (card != null) 'card': card!.toJson(),
       };
 
@@ -53,7 +59,8 @@ class DeckCard {
     return DeckCard(j['name'] as String, j['qty'] as int? ?? 1,
         commander: j['commander'] as bool? ?? false,
         card: card,
-        proxies: (j['proxies'] as num?)?.toInt() ?? 0);
+        proxies: (j['proxies'] as num?)?.toInt() ?? 0,
+        proxyImage: j['proxy_image'] as String?);
   }
 }
 
@@ -109,6 +116,13 @@ class Deck {
 
   void setProxies(String key, int proxies) {
     cards = [for (final c in cards) c.key == key ? c.copyWith(proxies: proxies) : c];
+  }
+
+  /// Set (or with null, remove) the proxy photo for a card.
+  void setProxyImage(String key, String? path) {
+    cards = [
+      for (final c in cards) c.key == key ? c.copyWith(proxyImage: path, clearProxyImage: path == null) : c,
+    ];
   }
 
   void setCommander(String key, bool commander) {

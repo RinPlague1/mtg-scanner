@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'collection_query.dart';
 import 'json_file.dart';
 import 'models.dart';
 import 'scryfall.dart';
@@ -20,6 +21,9 @@ class CollectionEntry {
   /// entry's identity: moving copies keeps their tags.
   final Set<String> tags;
 
+  /// Folder inside the binder ("Sharks", "Box 3"), or null for unsorted.
+  final String? folder;
+
   CollectionEntry(
     this.card, {
     this.foil = false,
@@ -28,13 +32,25 @@ class CollectionEntry {
     this.condition = CardCondition.nm,
     DateTime? added,
     Set<String>? tags,
+    this.folder,
   })  : added = added ?? DateTime.now(),
         tags = tags ?? {};
 
-  static String keyFor(CardPrint card, bool foil, Binder binder, CardCondition condition) =>
-      '${card.id}|${foil ? 'f' : 'n'}|${binder.id}|${condition.code}';
+  static String keyFor(CardPrint card, bool foil, Binder binder, CardCondition condition, [String? folder]) =>
+      '${card.id}|${foil ? 'f' : 'n'}|${binder.id}|${condition.code}${folder == null ? '' : '|$folder'}';
 
-  String get key => keyFor(card, foil, binder, condition);
+  String get key => keyFor(card, foil, binder, condition, folder);
+
+  CollectionEntry copyWith({CardPrint? card, bool? foil, int? quantity, Binder? binder, CardCondition? condition,
+          String? folder, bool clearFolder = false}) =>
+      CollectionEntry(card ?? this.card,
+          foil: foil ?? this.foil,
+          quantity: quantity ?? this.quantity,
+          binder: binder ?? this.binder,
+          condition: condition ?? this.condition,
+          added: added,
+          tags: {...tags},
+          folder: clearFolder ? null : (folder ?? this.folder));
   String get nameKey => nameKeyOf(card);
 
   double? get priceEur => double.tryParse((foil ? card.priceEurFoil : card.priceEur) ?? '');
@@ -48,6 +64,7 @@ class CollectionEntry {
         'condition': condition.code,
         'added': added.toIso8601String(),
         if (tags.isNotEmpty) 'tags': tags.toList()..sort(),
+        if (folder != null) 'folder': folder,
       };
 
   /// Row shape for the server (see supabase/schema.sql → replace_my_collection).
@@ -61,6 +78,7 @@ class CollectionEntry {
         'condition': condition.code,
         'added': added.toUtc().toIso8601String(),
         'tags': tags.toList()..sort(),
+        'folder': folder,
       };
 
   factory CollectionEntry.fromJson(Map<String, dynamic> j) => CollectionEntry(
@@ -71,6 +89,7 @@ class CollectionEntry {
         condition: CardCondition.parse(j['condition'] as String?),
         added: DateTime.tryParse(j['added'] as String? ?? ''),
         tags: ((j['tags'] as List?) ?? const []).cast<String>().toSet(),
+        folder: j['folder'] as String?,
       );
 }
 
@@ -81,6 +100,11 @@ String nameKeyOf(CardPrint c) => nameKey(c.name);
 class CollectionStore extends ChangeNotifier {
   final List<CollectionEntry> _entries = [];
   final JsonFile _file = JsonFile('collection.json');
+  final JsonFile _foldersFile = JsonFile('folders.json');
+  final List<CollectionFolder> _folders = [];
+
+  /// Folder definitions (names, auto-sort rules), in display order.
+  List<CollectionFolder> get folders => List.unmodifiable(_folders);
 
   List<CollectionEntry> get entries => List.unmodifiable(_entries);
   int get totalCards => _entries.fold(0, (s, e) => s + e.quantity);
@@ -95,6 +119,12 @@ class CollectionStore extends ChangeNotifier {
       _entries.where((e) => e.nameKey == key).fold(0, (s, e) => s + e.quantity);
 
   Future<void> load() async {
+    final f = await _foldersFile.open();
+    if (f is List) {
+      _folders
+        ..clear()
+        ..addAll(f.map((x) => CollectionFolder.fromJson(x as Map<String, dynamic>)));
+    }
     final data = await _file.open();
     if (data is List) {
       _entries
@@ -107,8 +137,10 @@ class CollectionStore extends ChangeNotifier {
   Future<void> _save() => _file.write(_entries.map((e) => e.toJson()).toList());
 
   void _merge(CardPrint card, bool foil, int quantity, Binder binder, CardCondition condition,
-      {bool toFront = true, Set<String> tags = const {}}) {
-    final key = CollectionEntry.keyFor(card, foil, binder, condition);
+      {bool toFront = true, Set<String> tags = const {}, String? folder}) {
+    // New cards go into the first auto-sorting folder whose rule they match.
+    folder ??= autoFolderFor(CollectionEntry(card, foil: foil, binder: binder, condition: condition, tags: tags));
+    final key = CollectionEntry.keyFor(card, foil, binder, condition, folder);
     final i = _entries.indexWhere((e) => e.key == key);
     if (i >= 0) {
       _entries[i].quantity += quantity;
@@ -121,7 +153,7 @@ class CollectionStore extends ChangeNotifier {
       _entries.insert(
           0,
           CollectionEntry(card,
-              foil: foil, quantity: quantity, binder: binder, condition: condition, tags: {...tags}));
+              foil: foil, quantity: quantity, binder: binder, condition: condition, tags: {...tags}, folder: folder));
     }
   }
 
@@ -140,7 +172,7 @@ class CollectionStore extends ChangeNotifier {
   /// Bulk add (imports). One save and one notification.
   Future<void> addAll(Iterable<CollectionEntry> items) async {
     for (final e in items) {
-      _merge(e.card, e.foil, e.quantity, e.binder, e.condition, tags: e.tags);
+      _merge(e.card, e.foil, e.quantity, e.binder, e.condition, tags: e.tags, folder: e.folder);
     }
     notifyListeners();
     await _save();
@@ -172,14 +204,16 @@ class CollectionStore extends ChangeNotifier {
     final index = _entries.indexOf(e);
     e.quantity -= n;
     if (e.quantity == 0) _entries.remove(e);
-    final key = CollectionEntry.keyFor(e.card, e.foil, b, c);
+    // Folders belong to a binder: moving binder leaves the folder behind.
+    final folder = b == e.binder ? e.folder : null;
+    final key = CollectionEntry.keyFor(e.card, e.foil, b, c, folder);
     final existing = _entries.where((x) => x.key == key).firstOrNull;
     if (existing != null) {
       existing.quantity += n;
       existing.tags.addAll(e.tags);
     } else {
       final moved = CollectionEntry(e.card,
-          foil: e.foil, quantity: n, binder: b, condition: c, added: e.added, tags: {...e.tags});
+          foil: e.foil, quantity: n, binder: b, condition: c, added: e.added, tags: {...e.tags}, folder: folder);
       _entries.insert(index.clamp(0, _entries.length), moved);
     }
     return true;
@@ -193,14 +227,20 @@ class CollectionStore extends ChangeNotifier {
     if (card.id == e.card.id && f == e.foil) return e;
     final index = _entries.indexOf(e);
     _entries.remove(e);
-    final key = CollectionEntry.keyFor(card, f, e.binder, e.condition);
+    final key = CollectionEntry.keyFor(card, f, e.binder, e.condition, e.folder);
     var result = _entries.where((x) => x.key == key).firstOrNull;
     if (result != null) {
       result.quantity += e.quantity;
       result.tags.addAll(e.tags);
     } else {
       result = CollectionEntry(card,
-          foil: f, quantity: e.quantity, binder: e.binder, condition: e.condition, added: e.added, tags: {...e.tags});
+          foil: f,
+          quantity: e.quantity,
+          binder: e.binder,
+          condition: e.condition,
+          added: e.added,
+          tags: {...e.tags},
+          folder: e.folder);
       _entries.insert(index.clamp(0, _entries.length), result);
     }
     notifyListeners();
@@ -219,6 +259,103 @@ class CollectionStore extends ChangeNotifier {
     if (!changed) return;
     notifyListeners();
     await _save();
+  }
+
+  /// Replace entries with edited copies, merging any that now share a key.
+  void _replaceAllNoSave(Iterable<CollectionEntry> items, CollectionEntry Function(CollectionEntry) edit) {
+    for (final e in items.toList()) {
+      final i = _entries.indexOf(e);
+      if (i < 0) continue;
+      final next = edit(e);
+      if (next.key == e.key) continue;
+      _entries.removeAt(i);
+      final existing = _entries.where((x) => x.key == next.key).firstOrNull;
+      if (existing != null) {
+        existing.quantity += next.quantity;
+        existing.tags.addAll(next.tags);
+      } else {
+        _entries.insert(i.clamp(0, _entries.length), next);
+      }
+    }
+  }
+
+  /// Set foil / non-foil on many entries.
+  Future<void> setFoilAll(Iterable<CollectionEntry> items, bool foil) async {
+    _replaceAllNoSave(items, (e) => e.copyWith(foil: foil));
+    notifyListeners();
+    await _save();
+  }
+
+  /// Put entries into [folder] (null = unsorted). Cards stay in their binder.
+  Future<void> setFolderAll(Iterable<CollectionEntry> items, String? folder) async {
+    _replaceAllNoSave(items, (e) => e.copyWith(folder: folder, clearFolder: folder == null));
+    notifyListeners();
+    await _save();
+  }
+
+  // ───────── Folders ─────────
+
+  Future<void> _saveFolders() => _foldersFile.write(_folders.map((f) => f.toJson()).toList());
+
+  List<CollectionFolder> foldersIn(Binder b) => _folders.where((f) => f.binder == b).toList();
+
+  int countInFolder(Binder b, String? folder) =>
+      _entries.where((e) => e.binder == b && e.folder == folder).fold(0, (n, e) => n + e.quantity);
+
+  CollectionFolder? folderNamed(Binder b, String name) =>
+      _folders.where((f) => f.binder == b && f.name == name).firstOrNull;
+
+  /// The first auto-sorting folder in [e]'s binder whose rule matches.
+  String? autoFolderFor(CollectionEntry e) {
+    for (final f in _folders) {
+      if (f.binder == e.binder && f.autoSort && f.rule != null && f.rule!.matches(e)) return f.name;
+    }
+    return null;
+  }
+
+  Future<void> saveFolder(CollectionFolder folder, {String? oldName}) async {
+    final i = _folders.indexWhere((f) => f.binder == folder.binder && f.name == (oldName ?? folder.name));
+    if (i >= 0) {
+      _folders[i] = folder;
+    } else {
+      _folders.add(folder);
+    }
+    if (oldName != null && oldName != folder.name) {
+      _replaceAllNoSave(_entries.where((e) => e.binder == folder.binder && e.folder == oldName),
+          (e) => e.copyWith(folder: folder.name));
+      await _save();
+    }
+    notifyListeners();
+    await _saveFolders();
+  }
+
+  /// Delete a folder; its cards go back to unsorted.
+  Future<void> deleteFolder(CollectionFolder folder) async {
+    _folders.remove(folder);
+    _replaceAllNoSave(_entries.where((e) => e.binder == folder.binder && e.folder == folder.name),
+        (e) => e.copyWith(clearFolder: true));
+    notifyListeners();
+    await _saveFolders();
+    await _save();
+  }
+
+  /// Move unsorted cards in the folder's binder that match its rule into it.
+  /// With [includeSorted], cards already in other folders move too.
+  Future<int> sortIntoFolder(CollectionFolder folder, {bool includeSorted = false}) async {
+    final rule = folder.rule;
+    if (rule == null) return 0;
+    final hits = _entries
+        .where((e) =>
+            e.binder == folder.binder &&
+            e.folder != folder.name &&
+            (includeSorted || e.folder == null) &&
+            rule.matches(e))
+        .toList();
+    final n = hits.fold(0, (s, e) => s + e.quantity);
+    _replaceAllNoSave(hits, (e) => e.copyWith(folder: folder.name));
+    notifyListeners();
+    await _save();
+    return n;
   }
 
   Future<void> removeAll(Iterable<CollectionEntry> items) async {
@@ -293,6 +430,28 @@ class CollectionStore extends ChangeNotifier {
     return n;
   }
 
+  /// Re-fetch prices (and details) for every printing you own. Uses the
+  /// offline card data when downloaded (its prices are up to a week old),
+  /// otherwise Scryfall, 75 cards per request. Returns how many updated.
+  Future<int> refreshPrices(ScryfallClient scryfall, {void Function(int done, int total)? onProgress}) async {
+    final need = _entries.where((e) => !e.card.id.startsWith('trade-')).toList();
+    if (need.isEmpty) return 0;
+    final ids = {for (final e in need) e.card.id};
+    final cards = await scryfall.collection(ids.map((id) => {'id': id}).toList(), onProgress: onProgress);
+    final byId = {for (final c in cards) c.id: c};
+    var n = 0;
+    for (final e in need) {
+      final fresh = byId[e.card.id];
+      if (fresh != null) {
+        e.card = fresh;
+        n++;
+      }
+    }
+    notifyListeners();
+    await _save();
+    return n;
+  }
+
   /// Replace everything (restore from the server on a new phone).
   Future<void> replaceAll(List<CollectionEntry> items) async {
     _entries
@@ -342,10 +501,10 @@ class CollectionStore extends ChangeNotifier {
   }
 
   /// Moxfield-compatible CSV (also accepted by most other collection sites).
-  String toMoxfieldCsv() {
+  String toMoxfieldCsv([Iterable<CollectionEntry>? only]) {
     String esc(String s) => '"${s.replaceAll('"', '""')}"';
     final b = StringBuffer('"Count","Name","Edition","Condition","Language","Foil","Collector Number"\n');
-    for (final e in _entries.reversed) {
+    for (final e in (only ?? _entries).toList().reversed) {
       b.writeln([
         esc('${e.quantity}'),
         esc(e.card.name),
@@ -359,11 +518,37 @@ class CollectionStore extends ChangeNotifier {
     return b.toString();
   }
 
-  Future<File> exportCsv() async {
+  Future<File> exportCsv([Iterable<CollectionEntry>? only, String name = 'collection']) async {
     final dir = await getTemporaryDirectory();
     final stamp = DateTime.now().toIso8601String().substring(0, 10);
-    final f = File('${dir.path}/collection-$stamp.csv');
-    await f.writeAsString(toMoxfieldCsv());
+    final safe = name.replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '-');
+    final f = File('${dir.path}/$safe-$stamp.csv');
+    await f.writeAsString(toMoxfieldCsv(only));
     return f;
   }
+}
+
+/// A folder inside a binder. With a [rule], "Sort now" (and, if [autoSort],
+/// every new card) puts matching cards in it.
+class CollectionFolder {
+  final String name;
+  final Binder binder;
+  final CollectionQuery? rule;
+  final bool autoSort;
+
+  const CollectionFolder({required this.name, required this.binder, this.rule, this.autoSort = false});
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'binder': binder.id,
+        if (rule != null) 'rule': rule!.toJson(),
+        if (autoSort) 'auto': true,
+      };
+
+  factory CollectionFolder.fromJson(Map<String, dynamic> j) => CollectionFolder(
+        name: j['name'] as String,
+        binder: Binder.parse(j['binder'] as String?),
+        rule: j['rule'] is Map ? CollectionQuery.fromJson((j['rule'] as Map).cast<String, dynamic>()) : null,
+        autoSort: j['auto'] as bool? ?? false,
+      );
 }

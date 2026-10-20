@@ -29,6 +29,8 @@ create table if not exists public.collection_items (
 create index if not exists collection_items_binder on public.collection_items (user_id, binder);
 -- Added later: your own tags, kept with the backup.
 alter table public.collection_items add column if not exists tags jsonb not null default '[]';
+-- Added later: folder inside the binder.
+alter table public.collection_items add column if not exists folder text;
 
 create table if not exists public.decks (
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -169,13 +171,13 @@ language plpgsql set search_path = public as $$
 begin
   if auth.uid() is null then raise exception 'not signed in'; end if;
   delete from collection_items where user_id = auth.uid();
-  insert into collection_items (user_id, item_key, card, name_key, foil, qty, binder, condition, added, tags)
+  insert into collection_items (user_id, item_key, card, name_key, foil, qty, binder, condition, added, tags, folder)
   select auth.uid(), x.item_key, x.card, x.name_key, coalesce(x.foil, false), x.qty,
          coalesce(x.binder, 'collection'), coalesce(x.condition, 'NM'), coalesce(x.added, now()),
-         coalesce(x.tags, '[]'::jsonb)
+         coalesce(x.tags, '[]'::jsonb), x.folder
   from jsonb_to_recordset(items) as x(
     item_key text, card jsonb, name_key text, foil boolean, qty int,
-    binder text, condition text, added timestamptz, tags jsonb)
+    binder text, condition text, added timestamptz, tags jsonb, folder text)
   where x.qty > 0;
 end $$;
 
@@ -355,3 +357,22 @@ begin
   select status into t.status from trades where id = trade_id;
   return t.status;
 end $$;
+
+-- ───────── Proxy photos (Storage) ─────────
+-- Private bucket; files sit under the owner's user id: <uid>/<deck>/<card>.png
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('proxy-images', 'proxy-images', false, 3145728, array['image/png', 'image/jpeg', 'image/webp'])
+on conflict (id) do update set public = false, file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "own proxy images" on storage.objects;
+create policy "own proxy images" on storage.objects
+  for all to authenticated
+  using (bucket_id = 'proxy-images' and (storage.foldername(name))[1] = auth.uid()::text)
+  with check (bucket_id = 'proxy-images' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "friends see proxy images" on storage.objects;
+create policy "friends see proxy images" on storage.objects
+  for select to authenticated
+  using (bucket_id = 'proxy-images'
+         and public.are_friends(auth.uid(), ((storage.foldername(name))[1])::uuid));

@@ -4,6 +4,7 @@ import '../data/prices.dart';
 import '../services.dart';
 import 'import_screen.dart';
 import 'widgets.dart';
+import 'wishlist_screen.dart';
 
 /// Your wants (deck gaps + wishlist) and your spares: what friends see.
 class WantsScreen extends StatelessWidget {
@@ -24,6 +25,13 @@ class WantsScreen extends StatelessWidget {
             appBar: AppBar(
               title: const Text('Wants & spares'),
               actions: [
+                IconButton(
+                  tooltip: 'Wishlist & price alerts',
+                  icon: const Icon(Icons.favorite),
+                  onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => WishlistScreen(services: s),
+                  )),
+                ),
                 IconButton(
                   tooltip: 'Import a wishlist',
                   icon: const Icon(Icons.upload_file),
@@ -69,6 +77,8 @@ class WantsScreen extends StatelessWidget {
                           ListTile(
                             dense: true,
                             title: Text('${item.qty}× ${item.name}'),
+                            subtitle: item.details.isEmpty ? null : Text(item.details),
+                            onTap: () => showWishEditor(context, s, existing: item),
                             trailing: IconButton(
                               icon: const Icon(Icons.close),
                               onPressed: () => s.wishlist.remove(item),
@@ -99,89 +109,5 @@ class WantsScreen extends StatelessWidget {
     );
   }
 
-  Future<void> _addWish(BuildContext context) async {
-    final result = await showDialog<(String, int)>(
-      context: context,
-      builder: (ctx) => _AddWishDialog(services: services),
-    );
-    if (result != null) await services.wishlist.add(result.$1, result.$2);
-  }
-}
-
-class _AddWishDialog extends StatefulWidget {
-  final AppServices services;
-  const _AddWishDialog({required this.services});
-
-  @override
-  State<_AddWishDialog> createState() => _AddWishDialogState();
-}
-
-class _AddWishDialogState extends State<_AddWishDialog> {
-  final _name = TextEditingController();
-  int _qty = 1;
-  List<String> _options = [];
-  int _requestNo = 0;
-
-  @override
-  void dispose() {
-    _name.dispose();
-    super.dispose();
-  }
-
-  Future<void> _lookup(String q) async {
-    final n = ++_requestNo;
-    try {
-      final opts = await widget.services.scryfall.autocomplete(q);
-      if (mounted && n == _requestNo) setState(() => _options = opts.take(6).toList());
-    } catch (_) {
-      // offline: free text still works
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Add to wishlist'),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          TextField(
-            controller: _name,
-            autofocus: true,
-            decoration: const InputDecoration(labelText: 'Card name'),
-            onChanged: _lookup,
-          ),
-          for (final o in _options)
-            ListTile(
-              dense: true,
-              title: Text(o),
-              onTap: () => setState(() {
-                _name.text = o;
-                _options = [];
-              }),
-            ),
-          Row(children: [
-            const Text('Copies'),
-            const Spacer(),
-            IconButton(
-              onPressed: _qty > 1 ? () => setState(() => _qty--) : null,
-              icon: const Icon(Icons.remove),
-            ),
-            Text('$_qty'),
-            IconButton(onPressed: () => setState(() => _qty++), icon: const Icon(Icons.add)),
-          ]),
-        ]),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(
-          onPressed: () {
-            final n = _name.text.trim();
-            if (n.isNotEmpty) Navigator.pop(context, (n, _qty));
-          },
-          child: const Text('Add'),
-        ),
-      ],
-    );
-  }
+  Future<void> _addWish(BuildContext context) => showWishEditor(context, services);
 }

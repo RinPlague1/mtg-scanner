@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../data/combos.dart';
 import '../data/deck_view.dart';
 import '../data/decks.dart';
 import '../data/models.dart';
@@ -9,8 +13,10 @@ import '../data/scryfall.dart';
 import '../services.dart';
 import '../social/backend.dart';
 import 'card_detail_sheet.dart';
+import 'card_gallery.dart';
 import 'deck_add_cards_screen.dart';
 import 'printing_picker.dart';
+import 'proxy_image.dart';
 import 'widgets.dart';
 
 /// One deck: cards grouped by type as a list or as card images, stats,
@@ -199,6 +205,9 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
             },
           ),
         if (_readOnly) Text('${widget.ownerName}\'s deck', style: Theme.of(context).textTheme.bodySmall),
+        Text(_readOnly ? 'Tap a card to view it full size and swipe through the deck.'
+            : 'Tap a card to view it full size and swipe; hold to edit.',
+            style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 8),
         Text([
           '${d.cardCount} cards',
@@ -248,7 +257,7 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
     final proxies = c.proxies.clamp(0, c.qty);
     return ListTile(
       dense: true,
-      leading: CardThumb(c.card?.imageUrl, width: 32),
+      leading: SizedBox(width: 32, child: DeckCardImage(s, c, width: 32, radius: 3)),
       title: Text('${c.qty}× ${c.name}'),
       subtitle: Text(
         [
@@ -261,7 +270,8 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
         style: short ? TextStyle(color: Theme.of(context).colorScheme.error) : null,
       ),
       trailing: ManaCost(c.card?.manaCost ?? ''),
-      onTap: () => _cardActions(d, c.key),
+      onTap: () => _openGallery(d, c),
+      onLongPress: _readOnly ? null : () => _cardActions(d, c.key),
     );
   }
 
@@ -269,24 +279,14 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
     final have = s.collection.ownedCount(c.key);
     final short = !_readOnly && have < c.realNeeded;
     final proxies = c.proxies.clamp(0, c.qty);
-    final img = c.card?.imageUrl;
     return GestureDetector(
-      onTap: () => _cardActions(d, c.key),
+      onTap: () => _openGallery(d, c),
+      onLongPress: _readOnly ? null : () => _cardActions(d, c.key),
       child: Stack(children: [
         Positioned.fill(
           child: Opacity(
             opacity: short ? 0.55 : 1,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: img == null
-                  ? Container(
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                      alignment: Alignment.center,
-                      padding: const EdgeInsets.all(6),
-                      child: Text(c.name, textAlign: TextAlign.center),
-                    )
-                  : Image.network(img, fit: BoxFit.cover),
-            ),
+            child: DeckCardImage(s, c),
           ),
         ),
         if (c.qty > 1)
@@ -323,10 +323,109 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
     }
   }
 
+  /// Full-screen viewer: swipe through every card in the deck, in the
+  /// order shown. Your own deck has an Edit button per card.
+  Future<void> _openGallery(Deck d, DeckCard start) {
+    final cards = [for (final (_, list) in groupDeck(d)) ...list];
+    final i = cards.indexWhere((c) => c.key == start.key);
+    return Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => CardGalleryScreen(
+        count: cards.length,
+        initialIndex: i < 0 ? 0 : i,
+        image: (ctx, n) => DeckCardImage(s, cards[n], fit: BoxFit.contain, radius: 0, large: true),
+        title: (n) => '${cards[n].qty}× ${cards[n].name}${cards[n].commander ? ' · Commander' : ''}',
+        subtitle: (n) {
+          final c = cards[n];
+          final have = s.collection.ownedCount(c.key);
+          return [
+            if (c.card != null) c.card!.typeLine,
+            if (c.proxies > 0) c.proxyImage != null ? 'proxy (their photo)' : 'proxy',
+            if (!_readOnly && have < c.realNeeded) have == 0 ? 'missing' : 'own $have',
+            if (c.card?.priceEur != null) gbp(double.tryParse(c.card!.priceEur!)),
+          ].join(' · ');
+        },
+        actions: (ctx, n) => [
+          OutlinedButton.icon(
+            icon: const Icon(Icons.info_outline),
+            label: const Text('Details'),
+            onPressed: () => _openDetails(cards[n]),
+          ),
+          if (!_readOnly)
+            FilledButton.icon(
+              icon: const Icon(Icons.edit_outlined),
+              label: const Text('Edit'),
+              onPressed: () => _cardActions(d, cards[n].key),
+            ),
+        ],
+      ),
+    ));
+  }
+
+  bool _uploading = false;
+
+  Future<void> _uploadProxyImage(Deck d, DeckCard c) async {
+    if (_uploading) return;
+    if (!s.backend.signedIn) {
+      showMessage(context, 'Sign in on the Friends tab to upload proxy photos');
+      return;
+    }
+    try {
+      final png = await pickProxyImage();
+      if (png == null || !mounted) return;
+      _uploading = true;
+      showMessage(context, 'Uploading photo…');
+      final old = c.proxyImage;
+      final path = await s.backend.uploadProxyImage(d.id, c.key, png);
+      d.setProxyImage(c.key, path);
+      await s.decks.changed();
+      if (old != null) unawaited(s.backend.deleteProxyImage(old).catchError((_) {}));
+      if (mounted) {
+        showMessage(context, d.shared ? 'Photo added. Friends will see it too' : 'Photo added');
+      }
+    } catch (e) {
+      if (mounted) showMessage(context, errorText(e));
+    } finally {
+      _uploading = false;
+    }
+  }
+
+  Future<void> _removeProxyImage(Deck d, DeckCard c) async {
+    final old = c.proxyImage;
+    if (old == null) return;
+    d.setProxyImage(c.key, null);
+    await s.decks.changed();
+    unawaited(s.backend.deleteProxyImage(old).catchError((_) {}));
+  }
+
+  /// A friend's card: their proxy photo large, or the card's details.
+  Future<void> _showFriendCard(DeckCard c) {
+    if (c.proxyImage == null) return _openDetails(c);
+    return showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            AspectRatio(aspectRatio: 0.716, child: DeckCardImage(s, c)),
+            const SizedBox(height: 8),
+            Text('${c.name} · proxy', style: Theme.of(ctx).textTheme.titleSmall),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _openDetails(c);
+              },
+              child: const Text('Card details'),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
   Future<void> _cardActions(Deck d, String key) {
     if (_readOnly) {
       final c = d.byKey(key);
-      return c == null ? Future.value() : _openDetails(c);
+      return c == null ? Future.value() : _showFriendCard(c);
     }
     return showModalBottomSheet<void>(
       context: context,
@@ -343,7 +442,7 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
               child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  CardThumb(c.card?.imageUrl, width: 90),
+                  SizedBox(width: 90, child: DeckCardImage(s, c, width: 90, radius: 6)),
                   const SizedBox(width: 16),
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -412,6 +511,16 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
                         : null,
                   ),
                 ]),
+                if (c.proxies > 0)
+                  Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.add_photo_alternate_outlined),
+                      label: Text(c.proxyImage == null ? 'Add photo of your proxy' : 'Replace proxy photo'),
+                      onPressed: () => _uploadProxyImage(d, c),
+                    ),
+                    if (c.proxyImage != null)
+                      TextButton(onPressed: () => _removeProxyImage(d, c), child: const Text('Remove photo')),
+                  ]),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Commander'),
@@ -485,7 +594,11 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
       builder: (ctx) => SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          child: _DeckStatsView(stats: deckStats(d)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            _DeckStatsView(stats: deckStats(d)),
+            const SizedBox(height: 20),
+            _CombosSection(deck: d),
+          ]),
         ),
       ),
     );
@@ -617,6 +730,88 @@ class _DeckStatsView extends StatelessWidget {
         for (final g in DeckGroup.values)
           if ((st.groups[g] ?? 0) > 0) Chip(label: Text('${g.label} ${st.groups[g]}')),
       ]),
+    ]);
+  }
+}
+
+/// Combos from Commander Spellbook: ones the deck already has, and ones a
+/// single card away.
+class _CombosSection extends StatefulWidget {
+  final Deck deck;
+  const _CombosSection({required this.deck});
+
+  @override
+  State<_CombosSection> createState() => _CombosSectionState();
+}
+
+class _CombosSectionState extends State<_CombosSection> {
+  static final _client = CombosClient();
+  late Future<DeckCombos> _future = _client.forDeck(widget.deck);
+  bool _showAlmost = false;
+
+  Future<void> _open(Combo c) async {
+    await launchUrl(Uri.parse(c.url), mode: LaunchMode.externalApplication);
+  }
+
+  Widget _tile(Combo c, {bool almost = false}) {
+    final theme = Theme.of(context);
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+      leading: Icon(almost ? Icons.add_circle_outline : Icons.all_inclusive,
+          color: almost ? null : theme.colorScheme.primary),
+      title: Text(c.cards.join(' + ')),
+      subtitle: Text([
+        if (almost && c.missing.isNotEmpty) 'Add ${c.missing.join(', ')}',
+        if (c.results.isNotEmpty) c.results.take(3).join(', '),
+      ].join(' · ')),
+      trailing: const Icon(Icons.open_in_new, size: 16),
+      onTap: () => _open(c),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('Combos (Commander Spellbook)', style: theme.textTheme.titleSmall),
+      const SizedBox(height: 4),
+      FutureBuilder<DeckCombos>(
+        future: _future,
+        builder: (context, snap) {
+          if (snap.hasError) {
+            return Row(children: [
+              Expanded(child: Text("Couldn't load combos: ${errorText(snap.error!)}")),
+              TextButton(
+                onPressed: () => setState(() => _future = _client.forDeck(widget.deck)),
+                child: const Text('Retry'),
+              ),
+            ]);
+          }
+          if (!snap.hasData) {
+            return const Padding(padding: EdgeInsets.all(12), child: LinearProgressIndicator());
+          }
+          final r = snap.data!;
+          return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            if (r.included.isEmpty)
+              const Text('No complete combos in this deck.')
+            else ...[
+              Text('${r.included.length} in this deck', style: theme.textTheme.bodySmall),
+              for (final c in r.included) _tile(c),
+            ],
+            if (r.almost.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              TextButton.icon(
+                icon: Icon(_showAlmost ? Icons.expand_less : Icons.expand_more),
+                label: Text('${r.almost.length} more need just one card'),
+                onPressed: () => setState(() => _showAlmost = !_showAlmost),
+              ),
+              if (_showAlmost)
+                for (final c in r.almost.take(40)) _tile(c, almost: true),
+            ],
+          ]);
+        },
+      ),
     ]);
   }
 }

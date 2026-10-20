@@ -94,4 +94,9 @@ class CardRegions {
 
   /// Collector number / set code / language (bottom-left, M15 frame and later).
   static const setLine = Box(-0.03, 0.895, 0.52, 1.04);
+
+  /// Retro (1997-style) frame reprints: "Illus. …" then
+  /// "™ & © 2024 Wizards of the Coast 346", centred along the bottom, with
+  /// the collector number at the right end and no set code.
+  static const retroLine = Box(0.12, 0.88, 0.88, 0.975);
 }
