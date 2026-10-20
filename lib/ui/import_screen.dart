@@ -45,6 +45,7 @@ class _ImportScreenState extends State<ImportScreen> {
   String? _fileName;
   ParsedList? _parsed;
   bool _busy = false;
+  String? _progress;
 
   @override
   void dispose() {
@@ -106,7 +107,13 @@ class _ImportScreenState extends State<ImportScreen> {
           showMessage(context, 'Added ${p.lines.length} cards to your wishlist');
           Navigator.pop(context);
         case ImportTarget.collection || ImportTarget.showcase || ImportTarget.trade:
-          final r = await resolveForCollection(s.scryfall, p.lines, _target.binder!);
+          s.scryfall.onRateLimited = (secs) {
+            if (mounted) setState(() => _progress = 'Scryfall asked us to slow down, waiting $secs s…');
+          };
+          final r = await resolveForCollection(s.scryfall, p.lines, _target.binder!, onProgress: (done, total) {
+            if (mounted) setState(() => _progress = 'Looking up cards… $done of $total');
+          });
+          s.scryfall.onRateLimited = null;
           await s.collection.addAll(r.entries);
           if (!mounted) return;
           final added = r.entries.fold(0, (n, e) => n + e.quantity);
@@ -121,7 +128,13 @@ class _ImportScreenState extends State<ImportScreen> {
     } catch (e) {
       if (mounted) showMessage(context, errorText(e));
     } finally {
-      if (mounted) setState(() => _busy = false);
+      widget.services.scryfall.onRateLimited = null;
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _progress = null;
+        });
+      }
     }
   }
 
@@ -260,14 +273,17 @@ class _ImportScreenState extends State<ImportScreen> {
           icon: _busy
               ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
               : const Icon(Icons.check),
-          label: Text(_busy && online ? 'Looking up cards…' : 'Import into ${_target.label}'),
+          label: Text(_busy && online ? (_progress ?? 'Looking up cards…') : 'Import into ${_target.label}'),
           onPressed: _busy || p == null || p.lines.isEmpty ? null : _save,
         ),
         if (online)
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Text(
-              'Cards are looked up on Scryfall to get the printing and price, so this needs a connection.',
+              widget.services.cardDb.db != null
+                  ? 'Cards are matched using the offline card data on this phone; only cards newer than it are looked up online.'
+                  : 'Cards are looked up on Scryfall (about 150 a second for big lists). For instant imports, download the '
+                      'offline card data in the scanner settings (⚙ on the Scan tab).',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),

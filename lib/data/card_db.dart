@@ -82,12 +82,13 @@ class CardDb {
   final List<String> _rows;
   final Map<String, String> setNames;
   final Map<String, int> _byCode;
+  final Map<String, int> _byId;
 
   /// nameKey → rows, preferred printing first.
   final Map<String, List<int>> _byName;
   final String updatedAt;
 
-  CardDb._(this._rows, this.setNames, this._byCode, this._byName, this.updatedAt);
+  CardDb._(this._rows, this.setNames, this._byCode, this._byId, this._byName, this.updatedAt);
 
   int get printingCount => _rows.length;
   int get cardCount => _byName.length;
@@ -113,6 +114,7 @@ class CardDb {
       }
     }
     final byCode = <String, int>{};
+    final byId = <String, int>{};
     final byName = <String, List<int>>{};
     final released = <int, String>{};
     final special = <int, bool>{};
@@ -120,6 +122,7 @@ class CardDb {
       final p = rows[i].split('\t');
       if (p.length < 17) continue;
       byCode[_codeKey(p[2], p[3])] = i;
+      byId[p[0]] = i;
       byName.putIfAbsent(nameKey(p[1]), () => []).add(i);
       released[i] = p[14];
       special[i] = p[15] == 's';
@@ -133,7 +136,7 @@ class CardDb {
         return released[b]!.compareTo(released[a]!);
       });
     }
-    return CardDb._(rows, sets, byCode, byName, updated);
+    return CardDb._(rows, sets, byCode, byId, byName, updated);
   }
 
   CardPrint _at(int i) {
@@ -157,6 +160,12 @@ class CardDb {
       manaCost: p[13],
       imageUrl: p[16] == '1' ? scryfallImageUrl(p[0]) : null,
     );
+  }
+
+  /// By Scryfall id (ManaBox and Moxfield exports include it).
+  CardPrint? byId(String id) {
+    final i = _byId[id.toLowerCase()];
+    return i == null ? null : _at(i);
   }
 
   /// By set code + collector number ("dft", "194"); tolerates leading zeros

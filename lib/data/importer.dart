@@ -17,8 +17,9 @@ class ResolvedImport {
 Future<ResolvedImport> resolveForCollection(
   ScryfallClient scryfall,
   List<ImportLine> lines,
-  Binder binder,
-) async {
+  Binder binder, {
+  void Function(int done, int total)? onProgress,
+}) async {
   final usable = lines.where((l) => l.section != 'maybeboard' && l.section != 'tokens').toList();
   Map<String, String> ident(ImportLine l) {
     if (l.scryfallId != null) return {'id': l.scryfallId!};
@@ -34,7 +35,7 @@ Future<ResolvedImport> resolveForCollection(
     final i = ident(l);
     idents[i.entries.map((e) => '${e.key}=${e.value.toLowerCase()}').join('&')] = i;
   }
-  final cards = await scryfall.collection(idents.values.toList());
+  final cards = await scryfall.collection(idents.values.toList(), onProgress: onProgress);
 
   CardPrint? find(ImportLine l) {
     if (l.scryfallId != null) {

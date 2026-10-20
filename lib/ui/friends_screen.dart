@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../data/decks.dart';
 import '../data/models.dart';
 import '../data/prices.dart';
 import '../data/trade_logic.dart';
 import '../services.dart';
 import '../social/backend.dart';
+import 'deck_screen.dart';
 import 'share_showcase.dart';
 import 'sign_in_panel.dart';
 import 'trade_editor_screen.dart';
@@ -219,6 +221,55 @@ class FriendProfileScreen extends StatefulWidget {
 
 class _FriendProfileScreenState extends State<FriendProfileScreen> {
   late Future<List<Map<String, dynamic>>> _binders = widget.services.backend.friendBinders(widget.friend.profile.id);
+  late Future<List<Deck>> _decks = _loadDecks();
+
+  Future<List<Deck>> _loadDecks() async {
+    final rows = await widget.services.backend.friendDecks(widget.friend.profile.id);
+    return rows.map(Deck.fromJson).toList()..sort((a, b) => a.name.compareTo(b.name));
+  }
+
+  Widget _decksTab() {
+    final f = widget.friend;
+    return FutureBuilder<List<Deck>>(
+      future: _decks,
+      builder: (context, snap) {
+        if (snap.hasError) {
+          return EmptyState(
+            icon: Icons.cloud_off,
+            title: "Couldn't load decks",
+            body: errorText(snap.error!),
+            action: TextButton(onPressed: () => setState(() => _decks = _loadDecks()), child: const Text('Retry')),
+          );
+        }
+        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+        final decks = snap.data!;
+        if (decks.isEmpty) {
+          return EmptyState(
+            icon: Icons.layers_outlined,
+            title: 'No shared decks',
+            body: '${f.profile.label} hasn\'t shared any decks yet (deck menu → Share with friends).',
+          );
+        }
+        return ListView(padding: const EdgeInsets.only(bottom: 88), children: [
+          for (final d in decks)
+            ListTile(
+              leading: d.commanders.isNotEmpty && d.commanders.first.card?.imageUrl != null
+                  ? CardThumb(d.commanders.first.card!.imageUrl, width: 32)
+                  : const Icon(Icons.layers),
+              title: Text(d.name),
+              subtitle: Text([
+                if (d.commanders.isNotEmpty) d.commanders.map((c) => c.name).join(' & '),
+                '${d.cardCount} cards',
+                if (d.cards.any((c) => c.proxies > 0)) 'has proxies',
+              ].join(' · ')),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => DeckDetailScreen.friend(services: widget.services, deck: d, owner: f.profile.label),
+              )),
+            ),
+        ]);
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -227,7 +278,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
     final lists = s.social.lists[f.profile.id];
     final suggestion = s.social.suggestions.where((x) => x.friendId == f.profile.id).firstOrNull;
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: Text(f.profile.label),
@@ -242,7 +293,11 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
               itemBuilder: (_) => const [PopupMenuItem(value: 'remove', child: Text('Remove friend'))],
             ),
           ],
-          bottom: const TabBar(tabs: [Tab(text: 'Showcase'), Tab(text: 'For trade'), Tab(text: 'Wants')]),
+          bottom: const TabBar(
+            isScrollable: true,
+            tabAlignment: TabAlignment.start,
+            tabs: [Tab(text: 'Showcase'), Tab(text: 'For trade'), Tab(text: 'Wants'), Tab(text: 'Decks')],
+          ),
         ),
         floatingActionButton: FloatingActionButton.extended(
           icon: const Icon(Icons.swap_horiz),
@@ -337,6 +392,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
               binderView(Binder.showcase),
               binderView(Binder.trade),
               _wants(lists?.wants ?? const []),
+              _decksTab(),
             ]);
           },
         ),

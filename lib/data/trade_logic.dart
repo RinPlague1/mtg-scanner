@@ -203,8 +203,10 @@ List<WantCard> computeWants(
     if (d.status == DeckStatus.retired) continue;
     final target = d.status == DeckStatus.built ? built : brew;
     for (final c in d.cards) {
+      final n = c.realNeeded; // proxies fill the slot
+      if (n <= 0) continue;
       names.putIfAbsent(c.key, () => c.name);
-      target.update(c.key, (v) => v + c.qty, ifAbsent: () => c.qty);
+      target.update(c.key, (v) => v + n, ifAbsent: () => n);
       final r = reasons.putIfAbsent(c.key, () => []);
       final label = '${d.status.label}: ${d.name}';
       if (!r.contains(label)) r.add(label);

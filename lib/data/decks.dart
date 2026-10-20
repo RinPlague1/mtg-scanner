@@ -14,17 +14,31 @@ class DeckCard {
   /// fetched for imported lists.
   final CardPrint? card;
 
-  const DeckCard(this.name, this.qty, {this.commander = false, this.card});
+  /// How many of [qty] are proxies (printed stand-ins, shown as [card]'s
+  /// printing). Proxies fill the slot: they aren't missing, aren't on your
+  /// wants, and aren't in your collection.
+  final int proxies;
+
+  const DeckCard(this.name, this.qty, {this.commander = false, this.card, this.proxies = 0});
 
   String get key => nameKey(name);
 
-  DeckCard copyWith({int? qty, bool? commander, CardPrint? card}) =>
-      DeckCard(name, qty ?? this.qty, commander: commander ?? this.commander, card: card ?? this.card);
+  /// Real copies this slot needs from your collection.
+  int get realNeeded => qty - proxies.clamp(0, qty);
+
+  DeckCard copyWith({int? qty, bool? commander, CardPrint? card, int? proxies}) {
+    final q = qty ?? this.qty;
+    return DeckCard(name, q,
+        commander: commander ?? this.commander,
+        card: card ?? this.card,
+        proxies: (proxies ?? this.proxies).clamp(0, q));
+  }
 
   Map<String, dynamic> toJson() => {
         'name': name,
         'qty': qty,
         if (commander) 'commander': true,
+        if (proxies > 0) 'proxies': proxies,
         if (card != null) 'card': card!.toJson(),
       };
 
@@ -37,7 +51,9 @@ class DeckCard {
       } catch (_) {}
     }
     return DeckCard(j['name'] as String, j['qty'] as int? ?? 1,
-        commander: j['commander'] as bool? ?? false, card: card);
+        commander: j['commander'] as bool? ?? false,
+        card: card,
+        proxies: (j['proxies'] as num?)?.toInt() ?? 0);
   }
 }
 
@@ -49,6 +65,9 @@ class Deck {
   List<DeckCard> cards;
   final DateTime created;
 
+  /// Friends can see this deck (cards, printings and proxies).
+  bool shared;
+
   Deck({
     String? id,
     required this.name,
@@ -56,6 +75,7 @@ class Deck {
     this.status = DeckStatus.built,
     List<DeckCard>? cards,
     DateTime? created,
+    this.shared = false,
   })  : id = id ?? newId(),
         cards = cards ?? [],
         created = created ?? DateTime.now();
@@ -87,6 +107,10 @@ class Deck {
     }
   }
 
+  void setProxies(String key, int proxies) {
+    cards = [for (final c in cards) c.key == key ? c.copyWith(proxies: proxies) : c];
+  }
+
   void setCommander(String key, bool commander) {
     cards = [for (final c in cards) c.key == key ? c.copyWith(commander: commander) : c];
   }
@@ -103,11 +127,13 @@ class Deck {
     return {for (final c in cs) ...c.card!.colorIdentity};
   }
 
-  /// Copies of each card name this deck needs.
+  /// Real copies of each card name this deck needs (proxies excluded).
   Map<String, int> get needs {
     final m = <String, int>{};
     for (final c in cards) {
-      m.update(c.key, (v) => v + c.qty, ifAbsent: () => c.qty);
+      final n = c.realNeeded;
+      if (n <= 0) continue;
+      m.update(c.key, (v) => v + n, ifAbsent: () => n);
     }
     return m;
   }
@@ -117,6 +143,7 @@ class Deck {
         'name': name,
         'format': format,
         'status': status.id,
+        if (shared) 'shared': true,
         'created': created.toUtc().toIso8601String(),
         'cards': cards.map((c) => c.toJson()).toList(),
       };
@@ -127,6 +154,7 @@ class Deck {
         format: j['format'] as String? ?? 'commander',
         status: DeckStatus.parse(j['status'] as String?),
         created: DateTime.tryParse(j['created'] as String? ?? ''),
+        shared: j['shared'] as bool? ?? false,
         cards: ((j['cards'] as List?) ?? const [])
             .map((c) => DeckCard.fromJson(c as Map<String, dynamic>))
             .toList(),

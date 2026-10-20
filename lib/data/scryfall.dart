@@ -140,12 +140,59 @@ class ScryfallClient {
   CardDbStore? local;
   CardDb? get _db => local?.db;
 
+  // ───────── Rate limiting ─────────
+  // Scryfall allows ~10 requests/s in general but only 2/s for search,
+  // named, random and collection lookups, and answers 429 ("wait 60 s")
+  // when that's exceeded. Requests are queued one at a time with those
+  // gaps, and a 429 pauses everything for as long as Scryfall asks.
+
+  Future<void> _gate = Future.value();
+  DateTime? _pausedUntil;
+
+  /// When Scryfall last asked us to slow down, until when (for messages).
+  DateTime? get rateLimitedUntil =>
+      _pausedUntil != null && _pausedUntil!.isAfter(DateTime.now()) ? _pausedUntil : null;
+
+  static bool _isHeavy(String path) =>
+      path.startsWith('/cards/search') ||
+      path.startsWith('/cards/named') ||
+      path.startsWith('/cards/collection') ||
+      path.startsWith('/cards/random') ||
+      path.startsWith('/cards/autocomplete');
+
+  Future<void> _slot(String path) {
+    final gap = Duration(milliseconds: _isHeavy(path) ? 550 : 120);
+    final turn = _gate.then((_) async {
+      final pause = _pausedUntil;
+      if (pause != null && pause.isAfter(DateTime.now())) {
+        await Future<void>.delayed(pause.difference(DateTime.now()));
+      }
+      final wait = gap - DateTime.now().difference(_last);
+      if (!wait.isNegative) await Future<void>.delayed(wait);
+      _last = DateTime.now();
+    });
+    _gate = turn.catchError((_) {});
+    return turn;
+  }
+
+  /// Sends a request in turn; on 429 waits as asked and tries again (twice).
+  Future<http.Response> _send(String path, Future<http.Response> Function() request) async {
+    for (var attempt = 0;; attempt++) {
+      await _slot(path);
+      final res = await request();
+      if (res.statusCode != 429 || attempt >= 2) return res;
+      final secs = int.tryParse(res.headers['retry-after'] ?? '') ?? 60;
+      _pausedUntil = DateTime.now().add(Duration(seconds: secs + 1));
+      onRateLimited?.call(secs + 1);
+    }
+  }
+
+  /// Told how many seconds we're waiting when Scryfall rate-limits us.
+  void Function(int seconds)? onRateLimited;
+
   Future<Map<String, dynamic>?> _get(String path, [Map<String, String>? query]) async {
-    final wait = const Duration(milliseconds: 110) - DateTime.now().difference(_last);
-    if (!wait.isNegative) await Future<void>.delayed(wait);
-    _last = DateTime.now();
     final uri = Uri.parse('$_base$path').replace(queryParameters: query);
-    final res = await _http.get(uri, headers: _headers).timeout(const Duration(seconds: 10));
+    final res = await _send(path, () => _http.get(uri, headers: _headers).timeout(const Duration(seconds: 10)));
     if (res.statusCode == 404) return null;
     if (res.statusCode != 200) {
       throw HttpException('Scryfall ${res.statusCode}: ${res.body}', uri: uri);
@@ -154,13 +201,12 @@ class ScryfallClient {
   }
 
   Future<Map<String, dynamic>> _post(String path, Object body) async {
-    final wait = const Duration(milliseconds: 110) - DateTime.now().difference(_last);
-    if (!wait.isNegative) await Future<void>.delayed(wait);
-    _last = DateTime.now();
     final uri = Uri.parse('$_base$path');
-    final res = await _http
-        .post(uri, headers: {..._headers, 'Content-Type': 'application/json'}, body: jsonEncode(body))
-        .timeout(const Duration(seconds: 20));
+    final res = await _send(
+        path,
+        () => _http
+            .post(uri, headers: {..._headers, 'Content-Type': 'application/json'}, body: jsonEncode(body))
+            .timeout(const Duration(seconds: 20)));
     if (res.statusCode != 200) {
       throw HttpException('Scryfall ${res.statusCode}: ${res.body}', uri: uri);
     }
@@ -169,16 +215,19 @@ class ScryfallClient {
 
   /// Bulk lookup (POST /cards/collection), 75 identifiers per request.
   /// Identifiers: {'id': …} | {'set': …, 'collector_number': …} | {'name': …, 'set'?: …}.
-  Future<List<CardPrint>> collection(List<Map<String, String>> identifiers) async {
+  Future<List<CardPrint>> collection(List<Map<String, String>> identifiers,
+      {void Function(int done, int total)? onProgress}) async {
     final out = <CardPrint>[];
     final db = _db;
     if (db != null) {
       final online = <Map<String, String>>[];
       for (final id in identifiers) {
-        final name = id['name'], set = id['set'], number = id['collector_number'];
-        final c = name != null
-            ? db.named(name, set: set)
-            : (set != null && number != null ? db.byCode(set, number) : null);
+        final name = id['name'], set = id['set'], number = id['collector_number'], sid = id['id'];
+        final c = sid != null
+            ? db.byId(sid)
+            : name != null
+                ? db.named(name, set: set)
+                : (set != null && number != null ? db.byCode(set, number) : null);
         if (c != null) {
           out.add(c);
         } else {
@@ -189,6 +238,7 @@ class ScryfallClient {
     }
     for (var i = 0; i < identifiers.length; i += 75) {
       final chunk = identifiers.sublist(i, i + 75 > identifiers.length ? identifiers.length : i + 75);
+      onProgress?.call(i, identifiers.length);
       final j = await _post('/cards/collection', {'identifiers': chunk});
       out.addAll((j['data'] as List).map((e) => CardPrint.fromScryfall(e as Map<String, dynamic>)));
     }

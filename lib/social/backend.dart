@@ -279,6 +279,15 @@ class Backend extends ChangeNotifier {
     return rows;
   }
 
+  /// A friend's decks that they've shared (raw deck JSON).
+  Future<List<Map<String, dynamic>>> friendDecks(String id) async {
+    final rows = await _db.from('decks').select('data').eq('user_id', id);
+    return [
+      for (final r in rows)
+        if ((r['data'] as Map?)?['shared'] == true) (r['data'] as Map).cast<String, dynamic>(),
+    ];
+  }
+
   // ───────── Trades ─────────
 
   Future<List<Trade>> trades() async {

@@ -81,6 +81,20 @@ void main() {
     expect(back.commanders.single.name, 'Captain Howler');
   });
 
+  test('proxies fill the slot: not needed from the collection, kept when saved', () {
+    final d = Deck(name: 'P', cards: [const DeckCard('Mana Crypt', 1), const DeckCard('Island', 10)]);
+    d.setProxies('mana crypt', 1);
+    d.setProxies('island', 4);
+    expect(d.needs, {'island': 6});
+    d.setQty('island', 3); // fewer copies than proxies: proxies shrink too
+    expect(d.byKey('island')!.proxies, 3);
+    expect(d.needs, isEmpty);
+    d.shared = true;
+    final again = Deck.fromJson(d.toJson());
+    expect(again.shared, isTrue);
+    expect(again.byKey('mana crypt')!.proxies, 1);
+  });
+
   test('saved deck cards keep their details', () {
     final c = sample().cards.first;
     final again = DeckCard.fromJson(c.toJson());

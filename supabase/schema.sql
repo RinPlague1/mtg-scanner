@@ -136,6 +136,11 @@ create policy "friends see showcase and trade binders" on public.collection_item
 drop policy if exists "own decks" on public.decks;
 create policy "own decks" on public.decks
   for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+-- Decks you switch to "Share with friends" (cards, printings, proxies).
+drop policy if exists "friends see shared decks" on public.decks;
+create policy "friends see shared decks" on public.decks
+  for select to authenticated
+  using ((data->>'shared')::boolean is true and public.are_friends(auth.uid(), user_id));
 
 drop policy if exists "own private state" on public.private_state;
 create policy "own private state" on public.private_state

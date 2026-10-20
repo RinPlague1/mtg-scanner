@@ -18,7 +18,19 @@ import 'widgets.dart';
 class DeckDetailScreen extends StatefulWidget {
   final AppServices services;
   final String deckId;
-  const DeckDetailScreen({super.key, required this.services, required this.deckId});
+
+  /// A friend's shared deck, shown read-only.
+  final Deck? friendDeck;
+  final String? ownerName;
+
+  const DeckDetailScreen({super.key, required this.services, required this.deckId})
+      : friendDeck = null,
+        ownerName = null;
+
+  DeckDetailScreen.friend({super.key, required this.services, required Deck deck, required String owner})
+      : deckId = deck.id,
+        friendDeck = deck,
+        ownerName = owner;
 
   @override
   State<DeckDetailScreen> createState() => _DeckDetailScreenState();
@@ -30,7 +42,8 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
   String? _loadError;
 
   AppServices get s => widget.services;
-  Deck? get _deck => s.decks.byId(widget.deckId);
+  bool get _readOnly => widget.friendDeck != null;
+  Deck? get _deck => widget.friendDeck ?? s.decks.byId(widget.deckId);
 
   @override
   void initState() {
@@ -47,6 +60,14 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
       _loadError = null;
     });
     try {
+      if (_readOnly) {
+        // A friend's deck: fill in details for viewing only, nothing is saved.
+        final missing = d.cards.where((c) => c.card == null).toList();
+        final found = await s.scryfall.collection([for (final c in missing) {'name': c.name}]);
+        final byKey = {for (final p in found) nameKey(p.name): p};
+        d.cards = [for (final c in d.cards) c.card == null && byKey[c.key] != null ? c.copyWith(card: byKey[c.key]) : c];
+        return;
+      }
       final left = await s.decks.fillDetails(d, s.scryfall);
       if (left > 0) _loadError = "Couldn't find details for $left card${left == 1 ? '' : 's'}";
     } catch (e) {
@@ -64,10 +85,12 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
         final d = _deck;
         if (d == null) return const Scaffold(body: Center(child: Text('Deck deleted')));
         final groups = groupDeck(d);
-        final missing = d.cards.fold(0, (n, c) {
-          final have = s.collection.ownedCount(c.key);
-          return n + (c.qty > have ? c.qty - have : 0);
-        });
+        final missing = _readOnly
+            ? 0
+            : d.cards.fold(0, (n, c) {
+                final have = s.collection.ownedCount(c.key);
+                return n + (c.realNeeded > have ? c.realNeeded - have : 0);
+              });
         final value = deckStats(d).valueEur;
         return Scaffold(
           appBar: AppBar(
@@ -83,14 +106,17 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
                 icon: const Icon(Icons.insights),
                 onPressed: () => _showStats(d),
               ),
+              if (!_readOnly)
               PopupMenuButton<String>(
                 onSelected: (v) => switch (v) {
+                  'share' => _toggleShared(d),
                   'rename' => _rename(d),
                   'export' => _export(d),
                   'reload' => _fillDetails(),
                   _ => _delete(d),
                 },
                 itemBuilder: (_) => [
+                  CheckedPopupMenuItem(value: 'share', checked: d.shared, child: const Text('Share with friends')),
                   const PopupMenuItem(value: 'rename', child: Text('Rename')),
                   const PopupMenuItem(value: 'export', child: Text('Export decklist')),
                   if (d.cards.any((c) => c.card == null))
@@ -100,7 +126,9 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
               ),
             ],
           ),
-          floatingActionButton: FloatingActionButton.extended(
+          floatingActionButton: _readOnly
+              ? null
+              : FloatingActionButton.extended(
             icon: const Icon(Icons.add),
             label: const Text('Add cards'),
             onPressed: () => Navigator.of(context).push(MaterialPageRoute(
@@ -161,21 +189,34 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        SegmentedButton<DeckStatus>(
-          segments: [for (final st in DeckStatus.values) ButtonSegment(value: st, label: Text(st.label))],
-          selected: {d.status},
-          onSelectionChanged: (v) {
-            d.status = v.first;
-            s.decks.changed();
-          },
-        ),
+        if (!_readOnly)
+          SegmentedButton<DeckStatus>(
+            segments: [for (final st in DeckStatus.values) ButtonSegment(value: st, label: Text(st.label))],
+            selected: {d.status},
+            onSelectionChanged: (v) {
+              d.status = v.first;
+              s.decks.changed();
+            },
+          ),
+        if (_readOnly) Text('${widget.ownerName}\'s deck', style: Theme.of(context).textTheme.bodySmall),
         const SizedBox(height: 8),
         Text([
           '${d.cardCount} cards',
           if (value > 0) gbp(value),
-          missing == 0 ? 'you own them all' : '$missing missing',
+          if (d.cards.any((c) => c.proxies > 0)) '${d.cards.fold(0, (n, c) => n + c.proxies.clamp(0, c.qty))} proxies',
+          if (!_readOnly) missing == 0 ? 'complete' : '$missing missing',
         ].join(' · '), style: Theme.of(context).textTheme.titleSmall),
+        if (!_readOnly && d.shared)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Row(children: [
+              Icon(Icons.people, size: 16, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 4),
+              Text('Shared with friends', style: Theme.of(context).textTheme.bodySmall),
+            ]),
+          ),
         const SizedBox(height: 4),
+        if (!_readOnly)
         Text(switch (d.status) {
           DeckStatus.built => missing == 0
               ? 'Owned copies are kept out of trades.'
@@ -202,14 +243,16 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
 
   Widget _listTile(Deck d, DeckCard c) {
     final have = s.collection.ownedCount(c.key);
-    final short = have < c.qty;
+    final short = !_readOnly && have < c.realNeeded;
     final type = c.card?.typeLine ?? '';
+    final proxies = c.proxies.clamp(0, c.qty);
     return ListTile(
       dense: true,
       leading: CardThumb(c.card?.imageUrl, width: 32),
       title: Text('${c.qty}× ${c.name}'),
       subtitle: Text(
         [
+          if (proxies > 0) proxies == c.qty ? 'proxy' : '$proxies proxy',
           if (type.isNotEmpty) type,
           if (short) have == 0 ? 'missing' : 'own $have',
         ].join(' · '),
@@ -224,7 +267,8 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
 
   Widget _gridTile(Deck d, DeckCard c) {
     final have = s.collection.ownedCount(c.key);
-    final short = have < c.qty;
+    final short = !_readOnly && have < c.realNeeded;
+    final proxies = c.proxies.clamp(0, c.qty);
     final img = c.card?.imageUrl;
     return GestureDetector(
       onTap: () => _cardActions(d, c.key),
@@ -247,6 +291,12 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
         ),
         if (c.qty > 1)
           Positioned(left: 4, top: 4, child: _badge('×${c.qty}', Colors.black87)),
+        if (proxies > 0)
+          Positioned(
+            right: 4,
+            top: 4,
+            child: _badge(proxies == c.qty ? 'PROXY' : 'PROXY ×$proxies', Colors.deepPurple),
+          ),
         if (short)
           Positioned(
             right: 4,
@@ -265,7 +315,19 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
 
   // ───────── Card actions ─────────
 
+  Future<void> _toggleShared(Deck d) async {
+    d.shared = !d.shared;
+    await s.decks.changed();
+    if (mounted) {
+      showMessage(context, d.shared ? 'Friends can now see ${d.name}' : '${d.name} is private again');
+    }
+  }
+
   Future<void> _cardActions(Deck d, String key) {
+    if (_readOnly) {
+      final c = d.byKey(key);
+      return c == null ? Future.value() : _openDetails(c);
+    }
     return showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -319,6 +381,37 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
                     },
                   ),
                 ]),
+                Row(children: [
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('Proxies'),
+                      Text(
+                        'Printed stand-ins, shown as the printing above. They fill the slot without being in '
+                        'your collection or on your wants.',
+                        style: Theme.of(ctx).textTheme.bodySmall,
+                      ),
+                    ]),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.remove),
+                    onPressed: c.proxies > 0
+                        ? () {
+                            d.setProxies(key, c.proxies - 1);
+                            s.decks.changed();
+                          }
+                        : null,
+                  ),
+                  Text('${c.proxies.clamp(0, c.qty)}', style: Theme.of(ctx).textTheme.titleMedium),
+                  IconButton(
+                    icon: const Icon(Icons.add),
+                    onPressed: c.proxies < c.qty
+                        ? () {
+                            d.setProxies(key, c.proxies + 1);
+                            s.decks.changed();
+                          }
+                        : null,
+                  ),
+                ]),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Commander'),
@@ -370,7 +463,7 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
   Future<void> _openDetails(DeckCard c) async {
     final p = await _printFor(c);
     if (p == null || !mounted) return;
-    await showCardDetail(context, s, p, forDeckId: widget.deckId);
+    await showCardDetail(context, s, p, forDeckId: _readOnly ? null : widget.deckId);
   }
 
   Future<void> _changePrinting(Deck d, DeckCard c) async {

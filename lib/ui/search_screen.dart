@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../data/decks.dart';
+import '../data/edhrec.dart';
 import '../data/collection_query.dart' show cardTypes, rarities;
 import '../data/models.dart';
 import '../data/scryfall.dart';
@@ -86,6 +89,9 @@ class _CardGrid extends StatelessWidget {
   final VoidCallback onMore;
   final String? forDeckId;
   final Widget? header;
+
+  /// Optional line under each card (by name key), e.g. EDHREC stats.
+  final Map<String, String>? captions;
   const _CardGrid({
     required this.services,
     required this.cards,
@@ -94,6 +100,7 @@ class _CardGrid extends StatelessWidget {
     required this.onMore,
     this.forDeckId,
     this.header,
+    this.captions,
   });
 
   @override
@@ -123,6 +130,7 @@ class _CardGrid extends StatelessWidget {
               (context, i) {
                 final c = cards[i];
                 final owned = services.collection.ownedCount(nameKey(c.name));
+                final caption = captions?[nameKey(c.name)];
                 return GestureDetector(
                   onTap: () => showCardDetail(context, services, c, forDeckId: forDeckId),
                   child: Stack(children: [
@@ -139,6 +147,25 @@ class _CardGrid extends StatelessWidget {
                             : Image.network(c.imageUrl!, fit: BoxFit.cover),
                       ),
                     ),
+                    if (caption != null && caption.isNotEmpty)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+                          decoration: const BoxDecoration(
+                            color: Color(0xCC000000),
+                            borderRadius: BorderRadius.vertical(bottom: Radius.circular(8)),
+                          ),
+                          child: Text(
+                            caption,
+                            textAlign: TextAlign.center,
+                            maxLines: 2,
+                            style: const TextStyle(color: Colors.white, fontSize: 10, height: 1.2),
+                          ),
+                        ),
+                      ),
                     if (owned > 0)
                       Positioned(
                         right: 4,
@@ -441,8 +468,93 @@ class _DeckSuggestionsState extends State<_DeckSuggestions> with AutomaticKeepAl
   _ResultPager? _pager;
   bool _loadingCommander = false;
 
+  // EDHREC: what real decks with this commander play.
+  static final _edhrec = EdhrecClient();
+  EdhrecPage? _edh;
+  bool _edhLoading = false;
+  String? _edhError;
+
+  /// Selected EDHREC section, or null for the Scryfall theme search.
+  int? _section;
+  final Map<String, List<CardPrint>> _sectionCards = {};
+  bool _sectionLoading = false;
+  String? _sectionError;
+
   @override
   bool get wantKeepAlive => true;
+
+  Future<void> _loadEdhrec(Deck deck) async {
+    final id = deck.id;
+    setState(() {
+      _edhLoading = true;
+      _edhError = null;
+    });
+    try {
+      final page = await _edhrec.commander(deck.commanders.map((c) => c.name).toList());
+      if (!mounted || _deckId != id) return;
+      setState(() {
+        _edh = page;
+        _edhLoading = false;
+        if (page != null && page.sections.isNotEmpty) {
+          final hi = page.sections.indexWhere((x) => x.tag.contains('synergy'));
+          _section = hi >= 0 ? hi : 0;
+        }
+      });
+      if (_section != null) _loadSection();
+    } catch (e) {
+      if (!mounted || _deckId != id) return;
+      setState(() {
+        _edhLoading = false;
+        _edhError = errorText(e);
+      });
+    }
+  }
+
+  /// Turns the selected EDHREC section's names into cards (offline card
+  /// data when downloaded, otherwise one Scryfall lookup per 75 cards).
+  Future<void> _loadSection() async {
+    final page = _edh, i = _section;
+    if (page == null || i == null || i >= page.sections.length) return;
+    final sec = page.sections[i];
+    if (_sectionCards.containsKey(sec.tag)) {
+      setState(() {});
+      return;
+    }
+    setState(() {
+      _sectionLoading = true;
+      _sectionError = null;
+    });
+    try {
+      final found = await widget.services.scryfall.collection([for (final c in sec.cards) {'name': c.name}]);
+      final byKey = {for (final c in found) nameKey(c.name): c};
+      final ordered = [
+        for (final c in sec.cards)
+          if (byKey[nameKey(c.name)] != null) byKey[nameKey(c.name)]!,
+      ];
+      if (!mounted) return;
+      setState(() {
+        _sectionCards[sec.tag] = ordered;
+        _sectionLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _sectionLoading = false;
+        _sectionError = errorText(e);
+      });
+    }
+  }
+
+  bool _matchesFilters(CardPrint c) {
+    final f = _filters;
+    if (f.types.isNotEmpty && !f.types.any((t) => c.typeLine.toLowerCase().contains(t.toLowerCase()))) return false;
+    if (f.rarities.isNotEmpty && !f.rarities.contains(c.rarity)) return false;
+    if (f.manaValues.isNotEmpty) {
+      final mv = c.cmc?.round();
+      if (mv == null || !f.manaValues.contains(mv >= 7 ? 7 : mv)) return false;
+    }
+    return true;
+  }
 
   List<Deck> get _decks => widget.services.decks.decks.where((d) => d.commanders.isNotEmpty).toList();
 
@@ -454,6 +566,11 @@ class _DeckSuggestionsState extends State<_DeckSuggestions> with AutomaticKeepAl
       _commanderError = null;
       _loadingCommander = true;
       _synergy = true;
+      _edh = null;
+      _edhError = null;
+      _section = null;
+      _sectionCards.clear();
+      _sectionError = null;
     });
     final deck = widget.services.decks.byId(id);
     if (deck == null) {
@@ -463,6 +580,7 @@ class _DeckSuggestionsState extends State<_DeckSuggestions> with AutomaticKeepAl
       });
       return;
     }
+    unawaited(_loadEdhrec(deck));
     try {
       // Colour identity and themes come from the commander(s).
       final ci = <String>{};
@@ -510,6 +628,99 @@ class _DeckSuggestionsState extends State<_DeckSuggestions> with AutomaticKeepAl
     });
   }
 
+  Future<void> _editFilters() async {
+    final f = await showSearchFilters(context, _filters, showColours: false);
+    if (f == null) return;
+    setState(() => _filters = f);
+    if (_section == null) _load();
+  }
+
+  /// EDHREC sections (High synergy, Top cards, Creatures…) and the Scryfall
+  /// theme search as a fallback.
+  Widget _sourceChips(DeckSuggestionQueries? q) {
+    final page = _edh;
+    return SizedBox(
+      height: 48,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+        children: [
+          if (_edhLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: Center(child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))),
+            ),
+          if (_edhError != null && page == null)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Tooltip(
+                message: _edhError!,
+                child: const Chip(avatar: Icon(Icons.cloud_off, size: 16), label: Text('EDHREC unavailable')),
+              ),
+            ),
+          if (page != null)
+            for (var i = 0; i < page.sections.length; i++)
+              Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: ChoiceChip(
+                  label: Text(page.sections[i].title),
+                  selected: _section == i,
+                  onSelected: (_) {
+                    setState(() => _section = i);
+                    _loadSection();
+                  },
+                ),
+              ),
+          ChoiceChip(
+            label: const Text('Scryfall themes'),
+            selected: _section == null,
+            onSelected: (_) {
+              setState(() => _section = null);
+              if (_pager == null) _load();
+            },
+          ),
+          if (_section != null) _filterButton(_filters, _editFilters),
+        ],
+      ),
+    );
+  }
+
+  Widget _edhrecBody(Set<String> inDeck) {
+    final page = _edh!;
+    final sec = page.sections[_section!];
+    if (_sectionError != null) {
+      return EmptyState(
+        icon: Icons.error_outline,
+        title: 'Couldn\'t load these cards',
+        body: _sectionError,
+        action: TextButton(onPressed: _loadSection, child: const Text('Retry')),
+      );
+    }
+    final cards = _sectionCards[sec.tag];
+    if (cards == null || _sectionLoading) return const Center(child: CircularProgressIndicator());
+    final stats = {for (final c in sec.cards) nameKey(c.name): c};
+    final hidden = cards.where((c) => inDeck.contains(nameKey(c.name))).length;
+    final notInDeck = cards.where((c) => !inDeck.contains(nameKey(c.name))).where(_matchesFilters).toList();
+    final visible = _applyOwned(widget.services, notInDeck, _filters.owned);
+    return _CardGrid(
+      services: widget.services,
+      cards: visible,
+      loading: false,
+      hasMore: false,
+      forDeckId: _deckId,
+      onMore: () {},
+      captions: {for (final e in stats.entries) e.key: e.value.caption},
+      header: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+        child: Text(
+          '${sec.title} from EDHREC${page.deckCount > 0 ? ', based on ${page.deckCount} decks with this commander' : ''}. '
+          '${hidden > 0 ? '$hidden already in your deck are hidden.' : ''}',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -552,7 +763,8 @@ class _DeckSuggestionsState extends State<_DeckSuggestions> with AutomaticKeepAl
           },
         ),
       ),
-      if (q != null)
+      if (_deckId != null) _sourceChips(q),
+      if (_section == null && q != null)
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
           child: Row(children: [
@@ -568,45 +780,42 @@ class _DeckSuggestionsState extends State<_DeckSuggestions> with AutomaticKeepAl
               },
             ),
             const Spacer(),
-            _filterButton(_filters, () async {
-              final f = await showSearchFilters(context, _filters, showColours: false);
-              if (f == null) return;
-              setState(() => _filters = f);
-              _load();
-            }),
+            _filterButton(_filters, _editFilters),
           ]),
         ),
       Expanded(
         child: _deckId == null
             ? const EmptyState(icon: Icons.lightbulb_outline, title: 'Pick a deck to see suggestions')
-            : _loadingCommander
-                ? const Center(child: CircularProgressIndicator())
-                : _commanderError != null
-                    ? EmptyState(icon: Icons.error_outline, title: 'Couldn\'t load the commander', body: _commanderError)
-                    : p == null
-                        ? const SizedBox()
-                        : p.error != null && p.cards.isEmpty
-                            ? EmptyState(icon: Icons.error_outline, title: 'Search failed', body: p.error)
-                            : _CardGrid(
-                                services: widget.services,
-                                cards: visible,
-                                loading: p.loading,
-                                hasMore: p.hasMore,
-                                forDeckId: _deckId,
-                                onMore: () => p.next(() {
-                                  if (mounted) setState(() {});
-                                }),
-                                header: Padding(
-                                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                                  child: Text(
-                                    _synergy && q?.synergy != null
-                                        ? 'Popular Commander cards in your colours that match: ${q!.themes.join(', ')}. '
-                                            'Cards already in the deck are hidden.'
-                                        : 'The most-played Commander cards in your colours, not already in the deck.',
-                                    style: Theme.of(context).textTheme.bodySmall,
+            : _section != null
+                ? _edhrecBody(inDeck)
+                : _loadingCommander
+                    ? const Center(child: CircularProgressIndicator())
+                    : _commanderError != null
+                        ? EmptyState(icon: Icons.error_outline, title: 'Couldn\'t load the commander', body: _commanderError)
+                        : p == null
+                            ? const SizedBox()
+                            : p.error != null && p.cards.isEmpty
+                                ? EmptyState(icon: Icons.error_outline, title: 'Search failed', body: p.error)
+                                : _CardGrid(
+                                    services: widget.services,
+                                    cards: visible,
+                                    loading: p.loading,
+                                    hasMore: p.hasMore,
+                                    forDeckId: _deckId,
+                                    onMore: () => p.next(() {
+                                      if (mounted) setState(() {});
+                                    }),
+                                    header: Padding(
+                                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                                      child: Text(
+                                        _synergy && q?.synergy != null
+                                            ? 'Scryfall search for Commander cards in your colours that match: '
+                                                '${q!.themes.join(', ')}. Cards already in the deck are hidden.'
+                                            : 'The most-played Commander cards in your colours, not already in the deck.',
+                                        style: Theme.of(context).textTheme.bodySmall,
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ),
       ),
     ]);
   }
