@@ -75,13 +75,13 @@ EdhrecPage parseEdhrecPage(Map<String, dynamic> j) {
       final c = v as Map;
       final name = c['name'] as String?;
       if (name == null || name.isEmpty) continue;
-      final num = (c['num_decks'] as num?)?.toInt() ?? (c['inclusion'] as num?)?.toInt() ?? 0;
+      final count = (c['num_decks'] as num?)?.toInt() ?? (c['inclusion'] as num?)?.toInt() ?? 0;
       final potential = (c['potential_decks'] as num?)?.toInt() ?? 0;
       cards.add(EdhrecCard(
         name,
         (c['synergy'] as num?)?.toDouble() ?? 0,
-        potential > 0 ? num / potential : 0,
-        num,
+        potential > 0 ? count / potential : 0,
+        count,
       ));
     }
     if (cards.isEmpty) continue;
