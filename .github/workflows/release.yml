@@ -31,19 +31,18 @@ jobs:
           channel: stable
           cache: true
 
-      # Every release must be signed with the same key, or phones refuse to
-      # install it over the previous version. The key is the
-      # ANDROID_DEBUG_KEYSTORE secret (base64), used as Flutter's signing key.
+      # Optional: with the ANDROID_DEBUG_KEYSTORE secret (base64) every release
+      # is signed with the same key, so updates install over the old app.
       - name: Signing key
         env:
           KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
         run: |
           if [ -z "$KEYSTORE" ]; then
-            echo "::error::Add the ANDROID_DEBUG_KEYSTORE secret first (see README → Making a release)."
-            exit 1
+            echo "::warning::No ANDROID_DEBUG_KEYSTORE secret: this APK gets a one-off key, so the next one won't install over it without uninstalling first."
+          else
+            mkdir -p ~/.android
+            echo "$KEYSTORE" | base64 -d > ~/.android/debug.keystore
           fi
-          mkdir -p ~/.android
-          echo "$KEYSTORE" | base64 -d > ~/.android/debug.keystore
 
       - name: Generate Android scaffolding
         run: flutter create --org com.ollie --project-name mtg_dark_scanner --platforms android .
