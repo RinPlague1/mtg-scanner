@@ -1,18 +1,52 @@
-# MTG Binder (working title) — collection, decks, friends and trades
+<p align="center">
+  <img src="assets/logo/binderbound_icon.png" alt="Binderbound logo" width="128">
+</p>
 
-A Flutter (Android-first) MTG collection app in the spirit of ManaBox, with:
+<h1 align="center">Binderbound</h1>
 
-- **A scanner that copes with black cards** on dark playmats (details below).
-- **Binders:** *Showcase* (not for trade; friends can see it, plus a public share link for flexing), *Up for trade* (offered first), and the default *Collection*.
-- **Organising:** sort (date added, name, price, set, mana value, colour, rarity), filter (colour identity, type, rarity, condition, foil, tags), your own tags like "Aang staples" or "To sell", long-press multi-select for bulk moves / condition / tags / delete, and a list or card-image grid view.
-- **Scan list:** scanned cards wait for review, so you can fix the printing, foil, condition and binder before adding them.
-- **Imports:** TXT and CSV from ManaBox, Moxfield, Deckbox, Archidekt and Arena, or pasted lists.
-- **Deck storage:** Built / Brewing / Retired decks. Missing cards become trade wants automatically; Built decks keep their cards out of trades ("the deck takes priority").
-- **Friends and trade suggestions:** add friends by username, see their Showcase, Up for trade binder and wants, and get two-way trade suggestions ranked by deck gaps. Propose, counter, accept, and mark trades as swapped; both collections update when both of you confirm.
-- **Offline-first:** everything works offline and syncs to Supabase when you're online.
-- **Prices in GBP:** Cardmarket EUR prices (via Scryfall) converted with the daily ECB rate.
+<p align="center">An MTG collection app for scanning, organising, deck building and trading with friends.<br>
+Built with Flutter. Android first, with an unsigned iOS build for sideloading.</p>
 
-The app name lives in `lib/config.dart` (`AppConfig.appName`) and `android:label` in `android/app/src/main/AndroidManifest.xml`.
+## Features
+
+**Scanning**
+- **A scanner that copes with black cards** on dark playmats (how it works is below).
+- Reads the set code and collector number for the exact printing, including older retro-frame cards; falls back to the name with a printing picker.
+- Scanned cards wait in a scan list so you can fix the printing, foil, condition and binder before adding them. Foil can be set after scanning.
+
+**Collection**
+- A **summary page** first: total value, binders, folders, recently added and most valuable cards. **View collection** opens the full list.
+- **Binders:** *Showcase* (not for trade; friends can see it, plus a public share link), *Up for trade* (offered first), and the default *Collection*.
+- **Folders inside binders**, with optional auto-sort rules (colour, type, set, price and more).
+- Sort, filter, tags, long-press multi-select for bulk moves, condition, foil, folders, tags, export and delete; list or card-image grid, with optional prices on the cards.
+- Change a card's printing from the collection; swipe-through card gallery with pinch to zoom.
+- **Insights:** value by binder, folder and set, change since the last price update, duplicates (keep 1 or 4), and set completion.
+- **Wishlist** with exact printing, foil, priority and price alerts.
+- **Imports:** TXT and CSV from ManaBox, Moxfield, Deckbox, Archidekt and Arena, or pasted lists. **Export** a Moxfield-format CSV.
+- **Offline card data:** download Scryfall's card data once for fast lookups without a connection (images still load online in high resolution).
+
+**Decks**
+- Build decks by searching Scryfall or your collection; Built / Brewing / Retired.
+- **Cards** and **Analytics** tabs: mana curve, colours, types, value, and **Commander Spellbook combos** (ones you have and ones you're close to).
+- **EDHREC suggestions** for your commander.
+- **Proxies** count towards a deck without needing the real card, and you can upload a photo of your proxy for friends to see.
+- Missing cards become trade wants automatically; Built decks keep their cards out of trades.
+- Export decklists; share decks with friends.
+
+**Friends and trades**
+- Add friends by username; see their Showcase, Up for trade binder, shared decks and wants.
+- **Matches:** what you have that they want, and what they have that you want.
+- Two-way trade suggestions ranked by deck gaps. Propose, counter, accept, and mark trades as swapped; both collections update when you both confirm.
+
+**General**
+- Choose the page the app opens on (Collection ⋮ → **Start page**).
+- 27 colour themes named after MTG colour combinations (mono, guilds, shards, wedges, five-colour), plus the default.
+- Offline-first: everything works offline and syncs to Supabase when you're online.
+- Prices in GBP: Cardmarket EUR prices (via Scryfall) converted with the daily ECB rate.
+
+Card data and images come from [Scryfall](https://scryfall.com). Binderbound is unofficial Fan Content and is not approved or endorsed by Wizards of the Coast.
+
+The app name lives in `lib/config.dart` (`AppConfig.appName`) and `android:label` in `android/app/src/main/AndroidManifest.xml`. The logo source is `assets/logo/binderbound_icon.svg`.
 
 ## Online setup (friends, trades, sync)
 
@@ -79,10 +113,9 @@ Synthetic results (1080×1920 frames, Dart-style sampling):
 - Live camera scanning with a card guide; the outline turns green once it locks onto real edges
 - Torch toggle, glare and low-light hints
 - Name matching your way (gear icon on the Scan tab): download Scryfall's card-name list once (about 1 MB, cached weekly) for fast offline matching, or **use Scryfall online** so nothing is downloaded and each scan's text goes to Scryfall's fuzzy search
-- Exact-printing lookup by set code and collector number, plus a printing picker
-- Foil toggle, auto-add mode for scanning a stack quickly
+- Exact-printing lookup by set code and collector number (modern and retro frames), plus a printing picker
+- Foil chosen after scanning, auto-add mode for scanning a stack quickly
 - Choose the binder scanned cards go into
-- Export a **Moxfield-format CSV** (Collection → Import), which also works for most other sites
 
 ## Build and run (Windows)
 
@@ -90,11 +123,11 @@ You need **Flutter 3.44 or newer** (the camera plugin requires it), Android Stud
 
 ```powershell
 cd mtg-scanner
-# Generate the Android scaffolding (gradle, MainActivity, icons).
-# Existing files, including lib/ and the AndroidManifest.xml with the camera permission, are kept.
+# Generate the Android scaffolding (gradle, MainActivity).
+# Existing files are kept, including lib/, the manifest with the camera permission, and the Binderbound icons.
 flutter create --org com.ollie --project-name mtg_dark_scanner --platforms android .
 flutter pub get
-flutter test                 # unit tests: edge refiner, OCR parsing, name matching, YUV rotation
+flutter test                 # unit tests
 flutter run --release        # with the phone plugged in
 ```
 
@@ -121,42 +154,39 @@ lib/
   config.dart               app name, Supabase settings (from --dart-define)
   services.dart             creates the stores and services
   scan_controller.dart      camera stream → isolate analysis → ML Kit OCR → voting → Scryfall
-  vision/
-    geometry.dart           guide box, card regions (title / collector line), quad maths
-    frame.dart              YUV420/NV21 sampling with sensor rotation, region warping, glare stat
-    edge_refiner.dart       the dark-card edge finder
-    scan_pipeline.dart      per-frame pipeline run in a background isolate, OCR crop enhancement
-  ocr/card_text_parser.dart title cleanup, set code + collector number parsing
+  vision/                   dark-card edge finder, frame sampling, per-frame pipeline
+  ocr/card_text_parser.dart title cleanup, set code + collector number parsing (modern and retro)
   data/
-    name_index.dart         offline fuzzy name matcher (bounded Levenshtein + prefix)
-    scryfall.dart           API client (rate-limited, proper User-Agent)
-    collection.dart         JSON-backed collection with binders + Moxfield CSV export
-    decks.dart, wishlist.dart
-    list_parser.dart        TXT / CSV import parsing
-    importer.dart           Scryfall bulk lookup for imports
+    card_db.dart            offline card data (downloaded from Scryfall bulk data)
+    name_index.dart         offline fuzzy name matcher
+    scryfall.dart           API client (queued, rate-limited, retries on 429)
+    collection.dart         collection, binders, folders, CSV export
+    collection_query.dart   sorting / filtering / folder rules
+    collection_stats.dart   value, duplicates, set completion
+    decks.dart, deck_view.dart   decks, proxies, stats
+    edhrec.dart, combos.dart     EDHREC suggestions, Commander Spellbook combos
+    wishlist.dart           wishlist and price alerts
+    list_parser.dart, importer.dart   TXT / CSV imports
     trade_logic.dart        spares, wants, trade suggestions (pure, unit-tested)
-    prices.dart             EUR → GBP
-  social/
-    backend.dart            Supabase calls
-    social_store.dart       friends, trades, suggestions (cached for offline)
-    sync.dart               offline-first sync to Supabase
-  ui/                       five tabs: Scan, Collection, Decks, Friends, Trades
-supabase/schema.sql         tables, Row Level Security, functions
+    prices.dart, settings.dart
+  social/                   Supabase calls, friends/trades store, offline-first sync
+  ui/                       six tabs: Scan, Collection, Search, Decks, Friends, Trades
+assets/logo/                app logo (SVG source and PNGs)
+android/, ios/              launcher icons and splash (the rest is generated by flutter create)
+supabase/schema.sql         tables, Row Level Security, storage, functions
 web_showcase/index.html     public Showcase viewer for share links
-test/                       unit tests (synthetic black-card scenes etc.)
-tool/                       Python mirror + photo harness + synthetic scene generator
+test/                       unit tests
+tool/                       Python mirror of the edge finder + photo harness + synthetic scenes
 ```
 
 ## Known limitations / next steps
 
-- Tested on synthetic scenes, not yet on real photos or a real device. Run `try_photo.py` on a few of your own dark cards first.
-- The collector-line parser expects the M15-and-later layout. Older cards (pre-2015) match by name only, then you pick the printing.
-- The title crop assumes a normal frame. Full-art, showcase and borderless cards with unusual title positions may need extra regions.
+- The scanner is tuned on synthetic scenes and a handful of real cards; unusual frames (some full-art and borderless cards) may need the printing picked by hand.
 - English OCR only (ML Kit Latin script).
 - Imports need a "Name" column for CSVs; there is no manual column-mapping screen yet.
 - Sign-in is email + password; Google sign-in and in-app chat are later items.
 - Sync is "phone wins": the last phone to sync replaces the server copy, so using two phones at once can overwrite changes.
-- Possible next steps: per-mat tuning; batch "sorting mode"; price history; playgroups; QR-code friend adds.
+- Possible next steps: batch "sorting mode"; price history; playgroups; QR-code friend adds.
 
 ## Getting an APK without installing Flutter (GitHub Actions)
 
@@ -166,3 +196,7 @@ tool/                       Python mirror + photo harness + synthetic scene gene
 4. Unzip it, copy `app-release.apk` to your phone and open it (allow "install unknown apps" for your file manager).
 
 The release build is signed with Flutter's debug key, which is fine for sideloading and testing but not for the Play Store.
+
+## iPhone build (unsigned, for sideloading)
+
+Run **Actions → Build iOS → Run workflow**. It builds an unsigned `.ipa` (artifact **mtg-binder-ios**) that you can install with a sideloading tool such as Sideloadly using a free Apple ID. Free-account installs expire after 7 days and need re-installing.
