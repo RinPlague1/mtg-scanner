@@ -93,4 +93,13 @@ void main() {
         'https://cards.scryfall.io/small/front/a/b/x.jpg?1');
     expect(imageAtSize('https://example.com/normal/x.jpg', 'small'), 'https://example.com/normal/x.jpg');
   });
+
+  test('splits a streamed JSON array however it is chunked or wrapped', () async {
+    const text = '[{"a":1,"s":"x}{\\"y"},\n{"b":[1,{"c":2}]}\n,{"d":"]"}]';
+    for (final size in [1, 2, 3, 5, 7, 100]) {
+      final chunks = [for (var i = 0; i < text.length; i += size) text.substring(i, (i + size).clamp(0, text.length))];
+      final objs = await splitJsonArray(Stream.fromIterable(chunks)).toList();
+      expect(objs, ['{"a":1,"s":"x}{\\"y"}', '{"b":[1,{"c":2}]}', '{"d":"]"}'], reason: 'chunk size $size');
+    }
+  });
 }

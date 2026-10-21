@@ -1,7 +1,7 @@
 /// App-wide settings. Rename the app by changing [appName] (and
 /// `android:label` in android/app/src/main/AndroidManifest.xml).
 class AppConfig {
-  static const appName = 'MTG Binder';
+  static const appName = 'Binderbound';
 
   /// Supabase project settings, passed at build time:
   ///   flutter build apk --dart-define=SUPABASE_URL=https://xxxx.supabase.co \

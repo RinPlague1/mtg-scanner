@@ -15,12 +15,19 @@ import 'import_screen.dart';
 import 'printing_picker.dart';
 import 'scan_review_screen.dart';
 import 'share_showcase.dart';
+import 'start_page.dart';
 import 'widgets.dart';
 import 'wishlist_screen.dart';
 
 class CollectionScreen extends StatefulWidget {
   final AppServices services;
-  const CollectionScreen({super.key, required this.services});
+
+  /// Tab to open on: 0 all, 1 Showcase, 2 For trade.
+  final int initialTab;
+
+  /// Folder to show on [initialTab] ("binderId/folder name").
+  final String? initialFolder;
+  const CollectionScreen({super.key, required this.services, this.initialTab = 0, this.initialFolder});
 
   @override
   State<CollectionScreen> createState() => _CollectionScreenState();
@@ -40,6 +47,12 @@ class _CollectionScreenState extends State<CollectionScreen> {
   static const _unsorted = '\u0000unsorted';
 
   CollectionStore get _store => widget.services.collection;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialFolder != null) _folderOnTab[widget.initialTab] = widget.initialFolder;
+  }
   bool get _selecting => _selected.isNotEmpty;
 
   CollectionQuery get _query {
@@ -330,6 +343,8 @@ class _CollectionScreenState extends State<CollectionScreen> {
                 st.setShowPriceOnCards(!st.showPriceOnCards);
               case 'theme':
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => ThemePickerScreen(settings: st)));
+              case 'start':
+                showStartPagePicker(context, st);
             }
           },
           itemBuilder: (_) => [
@@ -345,6 +360,7 @@ class _CollectionScreenState extends State<CollectionScreen> {
             const PopupMenuItem(value: 'insights', child: Text('Value, duplicates & sets')),
             CheckedPopupMenuItem(value: 'prices', checked: st.showPriceOnCards, child: const Text('Prices on cards')),
             PopupMenuItem(value: 'theme', child: Text('Colour theme · ${themeById(st.theme).name}')),
+            PopupMenuItem(value: 'start', child: Text('Start page · ${startPageLabel(st)}')),
             const PopupMenuDivider(),
             const PopupMenuItem(value: 'import', child: Text('Import TXT / CSV')),
             const PopupMenuItem(value: 'tags', child: Text('Manage tags')),
@@ -375,6 +391,7 @@ class _CollectionScreenState extends State<CollectionScreen> {
     final s = widget.services;
     return DefaultTabController(
       length: 3,
+      initialIndex: widget.initialTab,
       child: ListenableBuilder(
         listenable: Listenable.merge([_store, Fx.instance, s.buffer, s.settings, s.wishlist]),
         builder: (context, _) {

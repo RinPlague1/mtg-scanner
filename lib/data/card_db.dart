@@ -335,16 +335,18 @@ Future<void> _downloadMain(List<Object?> args) async {
     var seen = 0.0;
     var lastSent = 0.0;
     var written = 0;
-    await for (final line in res.transform(utf8.decoder).transform(const LineSplitter())) {
-      seen += line.length + 1;
-      var t = line.trim();
-      if (t.endsWith(',')) t = t.substring(0, t.length - 1);
-      if (t.startsWith('{')) {
-        final row = encodeCardRow(jsonDecode(t) as Map<String, dynamic>);
-        if (row != null) {
-          out.writeln(row);
-          written++;
-        }
+    // The file is one big JSON array. Cut it into card objects as it streams
+    // in (it may or may not have one card per line), so it never has to
+    // fit in memory.
+    final chars = res.transform(utf8.decoder).map((chunk) {
+      seen += chunk.length;
+      return chunk;
+    });
+    await for (final obj in splitJsonArray(chars)) {
+      final row = encodeCardRow(jsonDecode(obj) as Map<String, dynamic>);
+      if (row != null) {
+        out.writeln(row);
+        written++;
       }
       if (total > 0 && seen / total - lastSent >= 0.01) {
         lastSent = seen / total;
@@ -363,5 +365,48 @@ Future<void> _downloadMain(List<Object?> args) async {
     send.send('Download failed: $e');
   } finally {
     client.close(force: true);
+  }
+}
+
+/// Splits a streamed JSON array (`[ {...}, {...} ]`) into the text of each
+/// top-level object, whatever the line breaks and however the chunks fall.
+Stream<String> splitJsonArray(Stream<String> chunks) async* {
+  var depth = 0; // 1 = inside the array, 2+ = inside an object
+  var inString = false;
+  var escaped = false;
+  final buf = StringBuffer();
+  await for (final chunk in chunks) {
+    var start = -1; // where the current object's text begins in this chunk
+    if (depth >= 2) start = 0;
+    for (var i = 0; i < chunk.length; i++) {
+      final c = chunk.codeUnitAt(i);
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (c == 0x5C) {
+          escaped = true; // backslash
+        } else if (c == 0x22) {
+          inString = false;
+        }
+        continue;
+      }
+      if (c == 0x22) {
+        inString = true;
+      } else if (c == 0x7B || c == 0x5B) {
+        // { or [
+        if (depth == 1 && c == 0x7B) start = i;
+        depth++;
+      } else if (c == 0x7D || c == 0x5D) {
+        // } or ]
+        depth--;
+        if (depth == 1 && c == 0x7D && start >= 0) {
+          buf.write(chunk.substring(start, i + 1));
+          yield buf.toString();
+          buf.clear();
+          start = -1;
+        }
+      }
+    }
+    if (depth >= 2 && start >= 0) buf.write(chunk.substring(start));
   }
 }

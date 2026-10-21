@@ -32,7 +32,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Delete :NSCameraUsageDescription" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'The camera reads your cards so they can be added to your collection.'" "$PLIST"
           /usr/libexec/PlistBuddy -c "Delete :CFBundleDisplayName" "$PLIST" 2>/dev/null || true
-          /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string 'MTG Binder'" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string 'Binderbound'" "$PLIST"
           # ML Kit text recognition needs iOS 15.5 or newer.
           if grep -q "^# platform :ios" ios/Podfile; then
             sed -i '' "s/^# platform :ios.*/platform :ios, '15.5'/" ios/Podfile

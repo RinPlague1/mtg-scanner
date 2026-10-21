@@ -25,7 +25,7 @@ class MtgTheme {
 }
 
 const mtgThemes = <MtgTheme>[
-  MtgTheme('default', 'Dark Scanner', '', 'Default'),
+  MtgTheme('default', 'Binderbound', '', 'Default'),
   MtgTheme('white', 'White', 'W', 'Mono'),
   MtgTheme('blue', 'Blue', 'U', 'Mono'),
   MtgTheme('black', 'Black', 'B', 'Mono'),

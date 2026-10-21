@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Splash shown while the app starts (Android 11 and older). -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/launch_background" />
+    <item>
+        <bitmap android:gravity="center" android:src="@drawable/launch_logo" />
+    </item>
+</layer-list>

@@ -42,7 +42,8 @@ class DeckDetailScreen extends StatefulWidget {
   State<DeckDetailScreen> createState() => _DeckDetailScreenState();
 }
 
-class _DeckDetailScreenState extends State<DeckDetailScreen> {
+class _DeckDetailScreenState extends State<DeckDetailScreen> with SingleTickerProviderStateMixin {
+  late final _tabs = TabController(length: 2, vsync: this)..addListener(_tabChanged);
   bool _grid = false;
   bool _loading = false;
   String? _loadError;
@@ -55,6 +56,16 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _fillDetails());
+  }
+
+  void _tabChanged() {
+    if (!_tabs.indexIsChanging) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
   }
 
   /// Imported decks only have names; fetch types, costs and images once.
@@ -101,17 +112,17 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
         return Scaffold(
           appBar: AppBar(
             title: Text(d.name),
+            bottom: TabBar(controller: _tabs, tabs: const [
+              Tab(icon: Icon(Icons.style_outlined), text: 'Cards'),
+              Tab(icon: Icon(Icons.insights), text: 'Analytics'),
+            ]),
             actions: [
-              IconButton(
-                tooltip: _grid ? 'Show as list' : 'Show card images',
-                icon: Icon(_grid ? Icons.view_list : Icons.grid_view),
-                onPressed: () => setState(() => _grid = !_grid),
-              ),
-              IconButton(
-                tooltip: 'Stats',
-                icon: const Icon(Icons.insights),
-                onPressed: () => _showStats(d),
-              ),
+              if (_tabs.index == 0)
+                IconButton(
+                  tooltip: _grid ? 'Show as list' : 'Show card images',
+                  icon: Icon(_grid ? Icons.view_list : Icons.grid_view),
+                  onPressed: () => setState(() => _grid = !_grid),
+                ),
               if (!_readOnly)
               PopupMenuButton<String>(
                 onSelected: (v) => switch (v) {
@@ -132,7 +143,7 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
               ),
             ],
           ),
-          floatingActionButton: _readOnly
+          floatingActionButton: _readOnly || _tabs.index != 0
               ? null
               : FloatingActionButton.extended(
             icon: const Icon(Icons.add),
@@ -141,7 +152,8 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
               builder: (_) => DeckAddCardsScreen(services: s, deckId: d.id),
             )),
           ),
-          body: CustomScrollView(slivers: [
+          body: TabBarView(controller: _tabs, children: [
+            CustomScrollView(slivers: [
             SliverToBoxAdapter(child: _header(d, missing, value)),
             if (d.cards.isEmpty)
               const SliverFillRemaining(
@@ -185,6 +197,8 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
                 ),
             ],
             const SliverToBoxAdapter(child: SizedBox(height: 96)),
+            ]),
+            _analytics(d),
           ]),
         );
       },
@@ -586,21 +600,23 @@ class _DeckDetailScreenState extends State<DeckDetailScreen> {
 
   // ───────── Stats ─────────
 
-  void _showStats(Deck d) {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (ctx) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _DeckStatsView(stats: deckStats(d)),
-            const SizedBox(height: 20),
-            _CombosSection(deck: d),
-          ]),
-        ),
-      ),
+  Widget _analytics(Deck d) {
+    if (d.cards.isEmpty) {
+      return const EmptyState(
+        icon: Icons.insights,
+        title: 'Nothing to analyse yet',
+        body: 'Add cards to see the mana curve, colours, types, value and combos.',
+      );
+    }
+    return ListView(
+      // Keeps the combo lookup and scroll position when switching tabs.
+      key: PageStorageKey('analytics-${d.id}'),
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
+      children: [
+        _DeckStatsView(stats: deckStats(d)),
+        const SizedBox(height: 20),
+        _CombosSection(deck: d),
+      ],
     );
   }
 

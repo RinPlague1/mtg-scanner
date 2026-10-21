@@ -21,6 +21,17 @@ enum NameMatching {
       NameMatching.values.firstWhere((m) => m.id == s, orElse: () => NameMatching.offlineList);
 }
 
+/// Pages the app can open on (Collection ⋮ → Start page).
+const startPages = <({String id, String label})>[
+  (id: 'scan', label: 'Scan'),
+  (id: 'collection', label: 'Collection summary'),
+  (id: 'collection-list', label: 'Collection (all cards)'),
+  (id: 'search', label: 'Search'),
+  (id: 'decks', label: 'Decks'),
+  (id: 'friends', label: 'Friends'),
+  (id: 'trades', label: 'Trades'),
+];
+
 class AppSettings extends ChangeNotifier {
   NameMatching nameMatching = NameMatching.offlineList;
 
@@ -34,6 +45,9 @@ class AppSettings extends ChangeNotifier {
 
   /// Collection grid: show each card's price on its picture.
   bool showPriceOnCards = false;
+
+  /// Page the app opens on: an id from [startPages].
+  String startPage = 'collection';
 
   /// App colour theme id (an MTG colour combination, e.g. "izzet").
   String theme = 'default';
@@ -54,6 +68,8 @@ class AppSettings extends ChangeNotifier {
       showScanDebug = data['showScanDebug'] as bool? ?? false;
       showPriceOnCards = data['showPriceOnCards'] as bool? ?? false;
       theme = data['theme'] as String? ?? 'default';
+      final start = data['startPage'] as String?;
+      startPage = startPages.any((p) => p.id == start) ? start! : 'collection';
       lastValueEur = (data['lastValueEur'] as num?)?.toDouble();
       lastValueAt = DateTime.tryParse(data['lastValueAt'] as String? ?? '');
     }
@@ -68,9 +84,16 @@ class AppSettings extends ChangeNotifier {
         'showScanDebug': showScanDebug,
         'showPriceOnCards': showPriceOnCards,
         'theme': theme,
+        'startPage': startPage,
         if (lastValueEur != null) 'lastValueEur': lastValueEur,
         if (lastValueAt != null) 'lastValueAt': lastValueAt!.toIso8601String(),
       });
+
+  Future<void> setStartPage(String id) async {
+    startPage = id;
+    notifyListeners();
+    await _save();
+  }
 
   Future<void> setTheme(String id) async {
     theme = id;

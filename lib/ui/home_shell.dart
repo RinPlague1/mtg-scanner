@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services.dart';
 import '../social/backend.dart';
 import 'collection_screen.dart';
+import 'collection_summary_screen.dart';
 import 'decks_screen.dart';
 import 'friends_screen.dart';
 import 'scanner_screen.dart';
@@ -18,12 +19,28 @@ class HomeShell extends StatefulWidget {
 }
 
 class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
-  int _tab = 1;
+  late int _tab = _startTab(widget.services.settings.startPage);
+
+  static int _startTab(String id) => switch (id) {
+        'scan' => 0,
+        'search' => 2,
+        'decks' => 3,
+        'friends' => 4,
+        'trades' => 5,
+        _ => 1,
+      };
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (widget.services.settings.startPage == 'collection-list') {
+      // Open straight into the full list; Back returns to the summary.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Navigator.of(context).push(MaterialPageRoute(builder: (_) => CollectionScreen(services: widget.services)));
+      });
+    }
   }
 
   @override
@@ -45,7 +62,7 @@ class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
     // Only the visible tab is built, so the camera is released when you leave Scan.
     final body = switch (_tab) {
       0 => ScannerScreen(collection: s.collection, scryfall: s.scryfall, settings: s.settings, buffer: s.buffer),
-      1 => CollectionScreen(services: s),
+      1 => CollectionSummaryScreen(services: s),
       2 => SearchScreen(services: s),
       3 => DecksScreen(services: s),
       4 => FriendsScreen(services: s),
