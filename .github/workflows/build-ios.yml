@@ -22,6 +22,17 @@ jobs:
 
       - run: flutter pub get
 
+      # ML Kit needs iOS 15.5+. Set it before Flutter's first pod install
+      # (in the next step), which reads the target from the Xcode project.
+      - name: iOS 15.5 deployment target
+        run: |
+          sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.5;/g' ios/Runner.xcodeproj/project.pbxproj
+          /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 15.5" ios/Flutter/AppFrameworkInfo.plist 2>/dev/null || true
+          # Start from Flutter's own Podfile with the platform line switched on.
+          [ -f ios/Podfile ] || cp "$FLUTTER_ROOT/packages/flutter_tools/templates/cocoapods/Podfile-ios" ios/Podfile
+          sed -i '' "s/^# platform :ios.*/platform :ios, '15.5'/; s/^platform :ios.*/platform :ios, '15.5'/" ios/Podfile
+          grep -n "platform :ios" ios/Podfile
+
       # Writes ios/Podfile and the Flutter build settings without compiling.
       - name: Configure Xcode project
         run: flutter build ios --config-only --no-codesign --release
