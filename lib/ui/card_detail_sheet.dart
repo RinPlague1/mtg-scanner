@@ -9,6 +9,7 @@ import '../data/scryfall.dart';
 import '../services.dart';
 import 'widgets.dart';
 import 'wishlist_screen.dart';
+import 'net_image.dart';
 
 /// Card details from Scryfall with actions: add to collection, wishlist or a
 /// deck, or open the card on scryfall.com.
@@ -121,7 +122,7 @@ class _CardDetailState extends State<_CardDetail> {
               Center(
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: Image.network(imageAtSize(c.imageUrl!, 'large'), height: 340, fit: BoxFit.contain),
+                  child: NetImage(imageAtSize(c.imageUrl!, 'large'), height: 340, fit: BoxFit.contain),
                 ),
               ),
             const SizedBox(height: 12),

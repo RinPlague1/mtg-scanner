@@ -12,6 +12,7 @@ import 'share_showcase.dart';
 import 'sign_in_panel.dart';
 import 'trade_editor_screen.dart';
 import 'widgets.dart';
+import 'net_image.dart';
 
 class FriendsScreen extends StatefulWidget {
   final AppServices services;
@@ -382,7 +383,7 @@ class _FriendProfileScreenState extends State<FriendProfileScreen> {
                             ? Card(child: Center(child: Text(name(r), textAlign: TextAlign.center)))
                             : ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
-                                child: Image.network(url, fit: BoxFit.cover),
+                                child: NetImage(url, fit: BoxFit.cover),
                               ),
                       ),
                       if (qty > 1 || foil)

@@ -41,3 +41,6 @@
 -keepattributes Signature, InnerClasses, EnclosingMethod, *Annotation*
 -dontwarn kotlinx.**
 -dontwarn io.flutter.embedding.**
+
+# sqflite (used by the image disk cache).
+-keep class com.tekartik.sqflite.** { *; }

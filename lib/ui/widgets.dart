@@ -4,6 +4,7 @@ import '../data/card_db.dart' show imageAtSize;
 import '../data/prices.dart';
 import '../data/trade_logic.dart';
 import '../social/backend.dart';
+import 'net_image.dart';
 
 class CardThumb extends StatelessWidget {
   final String? url;
@@ -18,11 +19,11 @@ class CardThumb extends StatelessWidget {
     final u = width <= 60 ? imageAtSize(raw, 'small') : raw;
     return ClipRRect(
       borderRadius: BorderRadius.circular(width / 12),
-      child: Image.network(
+      child: NetImage(
         u,
         width: width,
         fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => SizedBox(width: width, child: const Icon(Icons.style)),
+        fallback: (_) => SizedBox(width: width, child: const Icon(Icons.style)),
       ),
     );
   }

@@ -14,6 +14,7 @@ import '../social/backend.dart';
 import 'card_detail_sheet.dart';
 import 'collection_tools.dart' show colourNames;
 import 'widgets.dart';
+import 'net_image.dart';
 
 /// Search Scryfall, and browse card suggestions for imported decks.
 class SearchScreen extends StatelessWidget {
@@ -144,7 +145,7 @@ class _CardGrid extends StatelessWidget {
                                 padding: const EdgeInsets.all(6),
                                 child: Text(c.name, textAlign: TextAlign.center),
                               )
-                            : Image.network(c.imageUrl!, fit: BoxFit.cover),
+                            : NetImage(c.imageUrl!, fit: BoxFit.cover),
                       ),
                     ),
                     if (caption != null && caption.isNotEmpty)

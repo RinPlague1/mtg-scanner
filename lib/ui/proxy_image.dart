@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../data/decks.dart';
 import '../services.dart';
 import 'card_gallery.dart';
+import 'net_image.dart';
 
 /// Lets the user choose a photo of their proxy, shrunk to card-image size
 /// (672 px wide PNG, a few hundred KB). Null if cancelled.
@@ -55,7 +56,7 @@ class DeckCardImage extends StatelessWidget {
     final url = card.card?.imageUrl;
     if (url == null) return _placeholder(context);
     if (large) return CardGalleryScreen.networkCard(url, card.name);
-    return Image.network(url, width: width, fit: fit, errorBuilder: (_, _, _) => _placeholder(context));
+    return NetImage(url, width: width, fit: fit, fallback: _placeholder);
   }
 
   @override
@@ -65,13 +66,13 @@ class DeckCardImage extends StatelessWidget {
     final Widget child = path == null
         ? _official(context)
         : cached != null
-            ? Image.network(cached, width: width, fit: fit, errorBuilder: (_, _, _) => _official(context))
+            ? NetImage(cached, cacheKey: 'proxy:$path', width: width, fit: fit, fallback: _official)
             : FutureBuilder<String?>(
             future: services.backend.proxyImageUrl(path),
             builder: (context, snap) {
               final url = snap.data;
               if (url == null) return snap.connectionState == ConnectionState.done ? _official(context) : _placeholder(context);
-              return Image.network(url, width: width, fit: fit, errorBuilder: (_, _, _) => _official(context));
+              return NetImage(url, cacheKey: 'proxy:$path', width: width, fit: fit, fallback: _official);
             },
           );
     return ClipRRect(borderRadius: BorderRadius.circular(radius), child: child);

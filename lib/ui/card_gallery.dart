@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../data/card_db.dart' show imageAtSize;
+import 'net_image.dart';
 
 /// Full-screen card viewer: swipe left/right through [count] cards, pinch to
 /// zoom. [image] draws card i; [title]/[subtitle] caption it; [actions]
@@ -28,17 +29,15 @@ class CardGalleryScreen extends StatefulWidget {
     if (url == null) {
       return Center(child: Text(name, style: const TextStyle(color: Colors.white, fontSize: 20)));
     }
-    return Image.network(
+    return NetImage(
       imageAtSize(url, 'large'),
       fit: BoxFit.contain,
-      loadingBuilder: (context, child, progress) => progress == null
-          ? child
-          : Stack(alignment: Alignment.center, children: [
-              // Show the smaller image already in cache while the large one loads.
-              Image.network(url, fit: BoxFit.contain),
-              const CircularProgressIndicator(),
-            ]),
-      errorBuilder: (_, _, _) => Image.network(url, fit: BoxFit.contain),
+      // Show the smaller image (usually already cached) while the large one loads.
+      loading: (_) => Stack(alignment: Alignment.center, children: [
+        NetImage(url, fit: BoxFit.contain),
+        const CircularProgressIndicator(),
+      ]),
+      fallback: (_) => NetImage(url, fit: BoxFit.contain),
     );
   }
 

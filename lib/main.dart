@@ -9,6 +9,10 @@ import 'ui/home_shell.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Room for more decoded card pictures, so scrolling back up doesn't reload them.
+  PaintingBinding.instance.imageCache
+    ..maximumSize = 3000
+    ..maximumSizeBytes = 300 << 20;
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   try {
     await Fx.instance.load();

@@ -12,6 +12,7 @@ import 'guide_overlay.dart';
 import 'printing_picker.dart';
 import 'scan_review_screen.dart';
 import 'scan_settings_sheet.dart';
+import 'net_image.dart';
 
 class ScannerScreen extends StatefulWidget {
   final CollectionStore collection;
@@ -349,7 +350,7 @@ class _ScannerScreenState extends State<ScannerScreen> with WidgetsBindingObserv
             if (c.imageUrl != null)
               ClipRRect(
                 borderRadius: BorderRadius.circular(6),
-                child: Image.network(c.imageUrl!, width: 80, fit: BoxFit.cover),
+                child: NetImage(c.imageUrl!, width: 80, fit: BoxFit.cover),
               ),
             const SizedBox(width: 12),
             Expanded(

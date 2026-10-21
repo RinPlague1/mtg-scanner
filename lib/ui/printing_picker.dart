@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../data/prices.dart';
 import '../data/scryfall.dart';
+import 'net_image.dart';
 
 /// Bottom sheet listing every printing of [current]'s card. Returns the one
 /// tapped, or null if dismissed. Used by the scanner and the collection.
@@ -27,7 +28,7 @@ Future<CardPrint?> pickPrinting(BuildContext context, ScryfallClient scryfall, C
               final foilOnly = !p.finishes.contains('nonfoil') && p.finishes.contains('foil');
               return ListTile(
                 selected: p.id == current.id,
-                leading: p.imageUrl == null ? null : Image.network(p.imageUrl!, width: 36),
+                leading: p.imageUrl == null ? null : NetImage(p.imageUrl!, width: 36),
                 title: Text('${p.setName} (${p.setCode.toUpperCase()})'),
                 subtitle: Text('#${p.collectorNumber} · ${p.rarity}${foilOnly ? ' · foil only' : ''}'),
                 trailing: Text(p.priceEur != null

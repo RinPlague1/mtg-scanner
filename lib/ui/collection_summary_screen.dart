@@ -9,6 +9,7 @@ import 'app_theme.dart';
 import 'collection_insights_screen.dart';
 import 'collection_screen.dart';
 import 'import_screen.dart';
+import 'net_image.dart';
 import 'scan_review_screen.dart';
 import 'start_page.dart';
 import 'widgets.dart';
@@ -67,12 +68,17 @@ class CollectionSummaryScreen extends StatelessWidget {
                       _push(context, ThemePickerScreen(settings: s.settings));
                     case 'import':
                       _push(context, ImportScreen(services: s));
+                    case 'images':
+                      clearImageCache().then((_) {
+                        if (context.mounted) showMessage(context, 'Image cache cleared');
+                      });
                   }
                 },
                 itemBuilder: (_) => [
                   PopupMenuItem(value: 'start', child: Text('Start page · ${startPageLabel(s.settings)}')),
                   PopupMenuItem(value: 'theme', child: Text('Colour theme · ${themeById(s.settings.theme).name}')),
                   const PopupMenuItem(value: 'import', child: Text('Import TXT / CSV')),
+                  const PopupMenuItem(value: 'images', child: Text('Clear image cache')),
                 ],
               ),
             ],

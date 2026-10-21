@@ -18,6 +18,7 @@ import 'share_showcase.dart';
 import 'start_page.dart';
 import 'widgets.dart';
 import 'wishlist_screen.dart';
+import 'net_image.dart';
 
 class CollectionScreen extends StatefulWidget {
   final AppServices services;
@@ -345,6 +346,10 @@ class _CollectionScreenState extends State<CollectionScreen> {
                 Navigator.of(context).push(MaterialPageRoute(builder: (_) => ThemePickerScreen(settings: st)));
               case 'start':
                 showStartPagePicker(context, st);
+              case 'images':
+                clearImageCache().then((_) {
+                  if (mounted) showMessage(context, 'Image cache cleared');
+                });
             }
           },
           itemBuilder: (_) => [
@@ -364,6 +369,7 @@ class _CollectionScreenState extends State<CollectionScreen> {
             const PopupMenuDivider(),
             const PopupMenuItem(value: 'import', child: Text('Import TXT / CSV')),
             const PopupMenuItem(value: 'tags', child: Text('Manage tags')),
+            const PopupMenuItem(value: 'images', child: Text('Clear image cache')),
             PopupMenuItem(
               value: 'details',
               enabled: _store.missingDetails > 0 && !_refreshing,
@@ -736,10 +742,11 @@ class _CollectionScreenState extends State<CollectionScreen> {
                         padding: const EdgeInsets.all(6),
                         child: Text(e.card.name, textAlign: TextAlign.center),
                       )
-                    : Image.network(
+                    : NetImage(
                         img,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) => Container(
+                        loading: (_) => ColoredBox(color: cs.surfaceContainerHighest),
+                        fallback: (_) => Container(
                           color: cs.surfaceContainerHighest,
                           alignment: Alignment.center,
                           child: Text(e.card.name, textAlign: TextAlign.center),

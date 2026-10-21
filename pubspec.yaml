@@ -10,8 +10,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  cached_network_image: ^3.4.1
   camera: ^0.12.1
   file_selector: ^1.0.3
+  flutter_cache_manager: ^3.4.1
   google_mlkit_text_recognition: ^0.17.1
   http: ^1.6.0
   path_provider: ^2.1.6

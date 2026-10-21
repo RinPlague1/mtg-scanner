@@ -317,18 +317,35 @@ Future<void> _downloadMain(List<Object?> args) async {
       return res;
     }
 
-    final info = jsonDecode(await (await get(_bulkInfoUrl)).transform(utf8.decoder).join()) as Map<String, dynamic>;
-    final url = info['download_uri'] as String;
-    final total = (info['size'] as num?)?.toDouble() ?? 0;
+    Future<Object?> getJson(String url) async => jsonDecode(await (await get(url)).transform(utf8.decoder).join());
+
+    // Where today's bulk file is. Read defensively: if this endpoint ever
+    // changes shape, fall back to the list of all bulk files.
+    var info = await getJson(_bulkInfoUrl);
+    String? url = info is Map ? info['download_uri']?.toString() : null;
+    if (url == null || url.isEmpty) {
+      final list = await getJson('https://api.scryfall.com/bulk-data');
+      final items = list is Map && list['data'] is List ? list['data'] as List : const [];
+      final match = items.whereType<Map>().where((m) => m['type'] == 'default_cards').firstOrNull;
+      info = match;
+      url = match?['download_uri']?.toString();
+    }
+    if (url == null || url.isEmpty) {
+      throw const FormatException("Scryfall didn't say where the card data file is");
+    }
+    final meta = info is Map ? info : const {};
+    final total = (meta['size'] as num?)?.toDouble() ?? 0;
 
     // Set names come from the sets list (one small request).
-    final setsJson =
-        jsonDecode(await (await get('https://api.scryfall.com/sets')).transform(utf8.decoder).join()) as Map;
+    final setsJson = await getJson('https://api.scryfall.com/sets');
     final out = File('$path.tmp').openWrite();
-    out.writeln('#v1\t${info['updated_at'] ?? ''}');
-    for (final s in (setsJson['data'] as List)) {
-      final m = s as Map;
-      out.writeln('#set\t${m['code']}\t${(m['name'] as String).replaceAll('\t', ' ')}');
+    out.writeln('#v1\t${meta['updated_at'] ?? ''}');
+    final sets = setsJson is Map && setsJson['data'] is List ? setsJson['data'] as List : const [];
+    for (final m in sets.whereType<Map>()) {
+      final code = m['code']?.toString();
+      if (code == null || code.isEmpty) continue;
+      final name = (m['name']?.toString() ?? code.toUpperCase()).replaceAll('\t', ' ');
+      out.writeln('#set\t$code\t$name');
     }
 
     final res = await get(url);
@@ -343,7 +360,14 @@ Future<void> _downloadMain(List<Object?> args) async {
       return chunk;
     });
     await for (final obj in splitJsonArray(chars)) {
-      final row = encodeCardRow(jsonDecode(obj) as Map<String, dynamic>);
+      String? row;
+      try {
+        final card = jsonDecode(obj);
+        // One odd card shouldn't stop the whole download.
+        if (card is Map<String, dynamic> && card['id'] != null && card['name'] != null) row = encodeCardRow(card);
+      } catch (_) {
+        row = null;
+      }
       if (row != null) {
         out.writeln(row);
         written++;
